@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Snake AI</title>
+<style>
+  body {
+    margin: 0;
+    background-color: #151515;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  canvas {
+    background-color: #151515;
+    display: block;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="1080" height="1080"></canvas>
+<script>
+// --- Настройки сетки ---
+const GRID_SIZE = 54;
+const CELL_SIZE = 54;
+const SNAKE_SIZE = 48;
+const GAP = CELL_SIZE - SNAKE_SIZE;
+
+// --- Цвета ---
+const COLOR_SNAKE = "#3ac322";
+const COLOR_SNAKE_SURVIVAL = "#b20c18";
+const COLOR_APPLE = "#e9102";
+
+// --- Канвас ---
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+// --- Игровое состояние ---
+let snake = [{x: 5, y: 5}];
+let direction = {x: 1, y: 0};
+let apple = {x: 10, y: 10};
+let survivalMode = false;
+
+// --- Генерация случайного яблока ---
+function spawnApple() {
+  let emptyCells = [];
+  for (let i = 0; i < GRID_SIZE; i++) {
+    for (let j = 0; j < GRID_SIZE; j++) {
+      if (!snake.some(s => s.x === i && s.y === j)) {
+        emptyCells.push({x: i, y: j});
+      }
+    }
+  }
+  apple = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+}
+
+// --- Отрисовка ---
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // сетка (опционально)
+  //ctx.strokeStyle = "#222";
+  //for(let i=0;i<=GRID_SIZE;i++){ctx.moveTo(i*CELL_SIZE,0);ctx.lineTo(i*CELL_SIZE,canvas.height);ctx.stroke();}
+  //for(let i=0;i<=GRID_SIZE;i++){ctx.moveTo(0,i*CELL_SIZE);ctx.lineTo(canvas.width,i*CELL_SIZE);ctx.stroke();}
+  
+  // яблоко
+  ctx.fillStyle = COLOR_APPLE;
+  ctx.fillRect(
+    apple.x * CELL_SIZE + (CELL_SIZE - 51)/2,
+    apple.y * CELL_SIZE + (CELL_SIZE - 51)/2,
+    51,
+    51
+  );
+
+  // змейка
+  snake.forEach((seg, idx) => {
+    ctx.fillStyle = survivalMode ? COLOR_SNAKE_SURVIVAL : COLOR_SNAKE;
+    ctx.fillRect(
+      seg.x * CELL_SIZE + GAP/2,
+      seg.y * CELL_SIZE + GAP/2,
+      SNAKE_SIZE,
+      SNAKE_SIZE
+    );
+  });
+}
+
+// --- Проверка конца игры ---
+function isCollision(x, y) {
+  if (x < 0 || y < 0 || x >= GRID_SIZE || y >= GRID_SIZE) return true;
+  return snake.some(seg => seg.x === x && seg.y === y);
+}
+
+// --- Простое движение змеи ---
+function moveSnake(nextPos) {
+  snake.unshift(nextPos);
+  if (nextPos.x === apple.x && nextPos.y === apple.y) {
+    spawnApple();
+  } else {
+    snake.pop();
+  }
+}
+
+// --- A* алгоритм ---
+function aStar(start, goal, grid) {
+  // упрощенный вариант для демо
+  // возвращает следующий шаг к цели
+  let dx = Math.sign(goal.x - start.x);
+  let dy = Math.sign(goal.y - start.y);
+  if(dx !== 0) return {x:start.x+dx, y:start.y};
+  if(dy !== 0) return {x:start.x, y:start.y+dy};
+  return start;
+}
+
+// --- Reversed A* + Survival ---
+function reversedAStar(start, goal, grid) {
+  // для демо просто меняем направление на противоположное от яблока
+  let dx = Math.sign(start.x - goal.x);
+  let dy = Math.sign(start.y - goal.y);
+  let nx = start.x + dx;
+  let ny = start.y + dy;
+  if (isCollision(nx, ny)) survivalMode = true;
+  else survivalMode = false;
+  return {x:nx, y:ny};
+}
+
+// --- Hamiltonian cycle placeholder ---
+function hamiltonianNext() {
+  // Для демо просто обходим по змейке вправо-вниз-влево-вверх
+  let head = snake[0];
+  let nx = (head.x + 1) % GRID_SIZE;
+  let ny = head.y;
+  if(isCollision(nx, ny)) nx = head.x, ny = (head.y + 1) % GRID_SIZE;
+  return {x:nx, y:ny};
+}
+
+// --- Главный игровой цикл ---
+function gameLoop() {
+  let nextStep;
+  if(snake.length < 20) {
+    nextStep = aStar(snake[0], apple);
+  } else if(snake.length < 100) {
+    nextStep = reversedAStar(snake[0], apple);
+  } else {
+    nextStep = hamiltonianNext();
+  }
+
+  if(isCollision(nextStep.x, nextStep.y)) {
+    alert("Game Over");
+    snake = [{x: 5, y: 5}];
+    survivalMode = false;
+    spawnApple();
+  } else {
+    moveSnake(nextStep);
+  }
+  draw();
+}
+
+// --- Запуск ---
+spawnApple();
+setInterval(gameLoop, 100); // скорость змейки
+
+</script>
+</body>
+</html>
