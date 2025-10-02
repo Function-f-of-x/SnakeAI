@@ -119,24 +119,24 @@ function reversedAStar() {
     const head = snake[0];
     const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
     let longestPath = [];
-    
+
     function dfs(pos, path) {
         visited[pos.y][pos.x] = true;
         path.push(pos);
 
         // Если дошли до яблока — проверяем, длиннее ли путь
-        if(pos.x === apple.x && pos.y === apple.y){
-            if(path.length > longestPath.length) longestPath = [...path];
+        if (pos.x === apple.x && pos.y === apple.y) {
+            if (path.length > longestPath.length) longestPath = [...path];
         } else {
             // Сортируем соседей так, чтобы двигаться в стороны максимально вдали от яблока
-            const dirs = neighbors(pos).sort((a,b)=>{
+            const dirs = neighbors(pos).sort((a, b) => {
                 return heuristic(b, apple) - heuristic(a, apple);
             });
-            for(let n of dirs){
-                if(!visited[n.y][n.x]){
+            for (let n of dirs) {
+                if (!visited[n.y][n.x]) {
                     // Кратковременный path для проверки 80%
-                    const futureSnake = [...path.map(p=>({x:p.x,y:p.y})), ...snake.slice(0, snake.length - path.length)];
-                    if(bfs(n, futureSnake) >= Math.floor(0.8*(COLS*ROWS - futureSnake.length))){
+                    const futureSnake = [...path.map(p => ({ x: p.x, y: p.y })), ...snake.slice(0, snake.length - path.length)];
+                    if (bfs(n, futureSnake) >= Math.floor(0.8 * (COLS * ROWS - futureSnake.length))) {
                         dfs(n, path);
                     }
                 }
@@ -150,6 +150,7 @@ function reversedAStar() {
     dfs(head, []);
     return longestPath.length > 0 ? longestPath.slice(1) : null;
 }
+
 
 
 function update(){
