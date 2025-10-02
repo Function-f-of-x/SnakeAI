@@ -29,6 +29,7 @@ let snake = [{x:5, y:5}];
 let apple = spawnApple();
 let path = [];
 let survival = false;
+let gameOver = false;
 
 function spawnApple() {
     let pos;
@@ -47,8 +48,8 @@ function draw() {
     ctx.fillRect(apple.x*GRID_SIZE + (GRID_SIZE-51)/2, apple.y*GRID_SIZE + (GRID_SIZE-51)/2, 51,51);
 
     // Draw snake
-    ctx.fillStyle = survival ? '#b20c18' : '#3ac322';
-    snake.forEach((s,i) => {
+    ctx.fillStyle = gameOver ? '#808080' : (survival ? '#b20c18' : '#3ac322');
+    snake.forEach(s => {
         ctx.fillRect(s.x*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, s.y*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, CELL_SIZE, CELL_SIZE);
     });
 }
@@ -144,6 +145,8 @@ function reversedAStar() {
 }
 
 function update() {
+    if(gameOver) return;
+
     const lengthThreshold = Math.floor(TOTAL_CELLS/8);
 
     if(!path || path.length===0){
@@ -166,7 +169,6 @@ function update() {
         if(!chosenPath){
             // Survival mode
             survival=true;
-            // move towards tail or any free neighbor
             const tail = snake[snake.length-1];
             let freeNeighbors = neighbors(snake[0]);
             if(freeNeighbors.length>0) chosenPath = [freeNeighbors[0]];
@@ -179,6 +181,13 @@ function update() {
     // Move
     if(path.length>0){
         let next = path.shift();
+
+        // Check collision
+        if(snake.some(s=>s.x===next.x && s.y===next.y)){
+            gameOver = true;
+            return;
+        }
+
         snake.unshift(next);
 
         if(next.x===apple.x && next.y===apple.y){
