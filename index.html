@@ -115,30 +115,42 @@ function safePath(pathToCheck){
     return reachable >= Math.floor(0.8*emptyCells);
 }
 
-// Reversed A* для длинного пути
-function reversedAStar(){
-    let head = snake[0];
-    let queue = [{pos: head, path: [head]}];
-    let longestPath = null;
+function reversedAStar() {
+    const head = snake[0];
+    const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+    let longestPath = [];
+    
+    function dfs(pos, path) {
+        visited[pos.y][pos.x] = true;
+        path.push(pos);
 
-    while(queue.length>0){
-        let current = queue.pop();
-        let {pos, path} = current;
-
-        if(pos.x===apple.x && pos.y===apple.y){
-            if(!longestPath || path.length>longestPath.length) longestPath = path;
-            continue;
+        // Если дошли до яблока — проверяем, длиннее ли путь
+        if(pos.x === apple.x && pos.y === apple.y){
+            if(path.length > longestPath.length) longestPath = [...path];
+        } else {
+            // Сортируем соседей так, чтобы двигаться в стороны максимально вдали от яблока
+            const dirs = neighbors(pos).sort((a,b)=>{
+                return heuristic(b, apple) - heuristic(a, apple);
+            });
+            for(let n of dirs){
+                if(!visited[n.y][n.x]){
+                    // Кратковременный path для проверки 80%
+                    const futureSnake = [...path.map(p=>({x:p.x,y:p.y})), ...snake.slice(0, snake.length - path.length)];
+                    if(bfs(n, futureSnake) >= Math.floor(0.8*(COLS*ROWS - futureSnake.length))){
+                        dfs(n, path);
+                    }
+                }
+            }
         }
 
-        for(let n of neighbors(pos, path.concat(snake.slice(1)))){
-            queue.push({pos:n, path:[...path, n]});
-        }
-
-        queue.sort((a,b)=>b.path.length - a.path.length);
+        path.pop();
+        visited[pos.y][pos.x] = false;
     }
 
-    return longestPath ? longestPath.slice(1) : null;
+    dfs(head, []);
+    return longestPath.length > 0 ? longestPath.slice(1) : null;
 }
+
 
 function update(){
     if(gameOver) return;
