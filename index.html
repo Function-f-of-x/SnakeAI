@@ -20,6 +20,7 @@ const PADDING = GRID_SIZE - CELL_SIZE;
 
 const COLS = 10;
 const ROWS = 10;
+const TOTAL_CELLS = COLS*ROWS;
 
 canvas.width = COLS * GRID_SIZE;
 canvas.height = ROWS * GRID_SIZE;
@@ -61,7 +62,6 @@ function neighbors(node){
                  .filter(n=>!snake.some(s=>s.x===n.x && s.y===n.y));
 }
 
-// Simple A* heuristic
 function heuristic(a,b){ return Math.abs(a.x-b.x)+Math.abs(a.y-b.y); }
 
 function findPath() {
@@ -74,14 +74,13 @@ function findPath() {
         open.sort((a,b)=>a.f-b.f);
         const current = open.shift();
         if(current.node.x===goal.x && current.node.y===goal.y){
-            // reconstruct path
             let p = [];
             let c = current;
             while(c){
                 p.unshift(c.node);
                 c = c.parent;
             }
-            return p.slice(1); // exclude head
+            return p.slice(1);
         }
         closed.push(current.node);
         for(const n of neighbors(current.node)){
@@ -92,10 +91,9 @@ function findPath() {
             open.push({node:n,g,f,parent:current});
         }
     }
-    return null; // no path
+    return null;
 }
 
-// Survival check: head must reach >=80% empty cells
 function safePath(pathToCheck){
     if(!pathToCheck) return false;
     const futureSnake = [...snake];
@@ -105,7 +103,6 @@ function safePath(pathToCheck){
     return reachable >= Math.floor(0.8*emptyCells);
 }
 
-// BFS to count reachable cells
 function bfs(startPos, occupied){
     let queue=[startPos], visited=[`${startPos.x},${startPos.y}`], count=1;
     while(queue.length>0){
@@ -121,7 +118,6 @@ function bfs(startPos, occupied){
     return count;
 }
 
-// Reverse A* (longest path)
 function reversedAStar() {
     let start = snake[0], goal = apple;
     let allPaths = [];
@@ -143,27 +139,41 @@ function reversedAStar() {
     }
     dfs([start],[...snake]);
     if(allPaths.length===0) return null;
-    // longest path
     allPaths.sort((a,b)=>b.length - a.length);
     return allPaths[0].slice(1);
 }
 
 function update() {
-    // Choose path algorithm
+    const lengthThreshold = Math.floor(TOTAL_CELLS/8);
+
     if(!path || path.length===0){
-        let aStarPath = findPath();
-        if(aStarPath && safePath(aStarPath)){
-            path = aStarPath;
-            survival=false;
+        let chosenPath = null;
+
+        if(snake.length <= lengthThreshold){
+            let aStarPath = findPath();
+            if(aStarPath && safePath(aStarPath)){
+                chosenPath = aStarPath;
+                survival=false;
+            }
         } else {
-            path = reversedAStar();
-            if(!path){
-                // survival mode
-                survival=true;
-                // move towards tail (last element)
-                path = [snake[snake.length-1]];
+            let rPath = reversedAStar();
+            if(rPath && safePath(rPath)){
+                chosenPath = rPath;
+                survival=false;
             }
         }
+
+        if(!chosenPath){
+            // Survival mode
+            survival=true;
+            // move towards tail or any free neighbor
+            const tail = snake[snake.length-1];
+            let freeNeighbors = neighbors(snake[0]);
+            if(freeNeighbors.length>0) chosenPath = [freeNeighbors[0]];
+            else chosenPath = [tail]; // forced
+        }
+
+        path = chosenPath;
     }
 
     // Move
@@ -171,10 +181,9 @@ function update() {
         let next = path.shift();
         snake.unshift(next);
 
-        // Eat apple
         if(next.x===apple.x && next.y===apple.y){
             apple = spawnApple();
-            path = []; // recalc path next tick
+            path=[];
         } else {
             snake.pop();
         }
