@@ -4,218 +4,190 @@
 <meta charset="UTF-8">
 <title>Snake AI</title>
 <style>
-  body {
-    margin: 0;
-    background-color: #000000;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
-  }
-  canvas {
-    background-color: #151515;
-    display: block;
-  }
+  body { margin:0; background:#000000; display:flex; justify-content:center; align-items:center; height:100vh; }
+  canvas { background:#151515; display:block; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <script>
-const GRID_SIZE = 54; // размер квадрата сетки
-const SNAKE_SIZE = 48; // размер квадрата змейки
-const APPLE_SIZE = 51; // размер яблока
-const GRID_WIDTH = 12; // количество клеток по ширине
-const GRID_HEIGHT = 12; // количество клеток по высоте
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
 
-const snakeColorNormal = "#3ac322";
-const snakeColorSurvival = "#b20c18";
-const appleColor = "#ee0a17";
+const GRID_SIZE = 54;
+const CELL_SIZE = 48;
+const PADDING = GRID_SIZE - CELL_SIZE;
 
-const canvas = document.getElementById("game");
-canvas.width = GRID_WIDTH * GRID_SIZE;
-canvas.height = GRID_HEIGHT * GRID_SIZE;
-const ctx = canvas.getContext("2d");
+const COLS = 10;
+const ROWS = 10;
 
-let snake = [{x: 5, y: 5}];
-let direction = {x: 1, y: 0};
-let apple = {x: Math.floor(Math.random()*GRID_WIDTH), y: Math.floor(Math.random()*GRID_HEIGHT)};
-let survivalMode = false;
+canvas.width = COLS * GRID_SIZE;
+canvas.height = ROWS * GRID_SIZE;
 
-// Проверка безопасного пути (≥80% пустых клеток после движения)
-function safePath(grid, path) {
-    let tempSnake = [...snake];
-    for (let step of path) {
-        tempSnake.push(step);
-        tempSnake.shift(); // двигаем змейку
-    }
-    // строим сетку после движения
-    let free = 0, total = 0;
-    for (let y=0; y<GRID_HEIGHT; y++) {
-        for (let x=0; x<GRID_WIDTH; x++) {
-            total++;
-            if (!tempSnake.some(s => s.x===x && s.y===y)) free++;
-        }
-    }
-    return (free/total) >= 0.8;
-}
-
-// A* поиск кратчайшего пути к яблоку
-function aStar(start, end, gridSnake) {
-    const open = [];
-    const cameFrom = {};
-    const gScore = {};
-    const fScore = {};
-    
-    function key(p){ return p.x+","+p.y; }
-    
-    gScore[key(start)] = 0;
-    fScore[key(start)] = Math.abs(start.x-end.x)+Math.abs(start.y-end.y);
-    open.push({...start, f: fScore[key(start)]});
-    
-    const dirs = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-    
-    while(open.length){
-        open.sort((a,b)=>a.f-b.f);
-        let current = open.shift();
-        if(current.x===end.x && current.y===end.y){
-            let path = [];
-            let k = key(current);
-            while(cameFrom[k]){
-                path.push(cameFrom[k]);
-                k = key(cameFrom[k]);
-            }
-            path.reverse();
-            return path;
-        }
-        for(let d of dirs){
-            let nx = current.x+d.x;
-            let ny = current.y+d.y;
-            if(nx<0 || ny<0 || nx>=GRID_WIDTH || ny>=GRID_HEIGHT) continue;
-            if(gridSnake.some(s=>s.x===nx && s.y===ny)) continue;
-            let neighbor = {x:nx,y:ny};
-            let tentativeG = gScore[key(current)] + 1;
-            if(tentativeG < (gScore[key(neighbor)] || Infinity)){
-                cameFrom[key(neighbor)] = current;
-                gScore[key(neighbor)] = tentativeG;
-                fScore[key(neighbor)] = tentativeG + Math.abs(nx-end.x)+Math.abs(ny-end.y);
-                if(!open.some(o=>o.x===nx && o.y===ny)) open.push({...neighbor, f:fScore[key(neighbor)]});
-            }
-        }
-    }
-    return null; // пути нет
-}
-
-// Reversed A*: поиск максимально длинного безопасного пути
-function reversedAStar(start, end, gridSnake) {
-    // Простая стратегия: BFS со случайным приоритетом пустых клеток, выбираем путь с максимальной длиной
-    const visited = {};
-    let queue = [[start]];
-    let bestPath = null;
-    
-    const dirs = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-    
-    while(queue.length){
-        let path = queue.shift();
-        let current = path[path.length-1];
-        if(current.x===end.x && current.y===end.y){
-            if(!bestPath || path.length > bestPath.length){
-                bestPath = path;
-            }
-            continue;
-        }
-        for(let d of dirs.sort(()=>Math.random()-0.5)){
-            let nx = current.x+d.x;
-            let ny = current.y+d.y;
-            if(nx<0 || ny<0 || nx>=GRID_WIDTH || ny>=GRID_HEIGHT) continue;
-            if(gridSnake.some(s=>s.x===nx && s.y===ny)) continue;
-            let key = nx+","+ny;
-            if(visited[key]) continue;
-            visited[key] = true;
-            queue.push([...path,{x:nx,y:ny}]);
-        }
-    }
-    return bestPath?bestPath.slice(1):null;
-}
-
-// Определение безопасного пути к яблоку
-function findPath(){
-    let path = aStar(snake[0], apple, snake);
-    if(!path || !safePath(null, path)){
-        // попробуем reversed A*
-        path = reversedAStar(snake[0], apple, snake);
-        if(!path || !safePath(null, path)){
-            survivalMode = true; // активируем выживание
-            return null;
-        } else {
-            survivalMode = false;
-            return path;
-        }
-    } else {
-        survivalMode = false;
-        return path;
-    }
-}
-
-// Рисуем всё
-function draw(){
-    ctx.fillStyle = "#151515";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-    
-    // змейка
-    ctx.fillStyle = survivalMode ? snakeColorSurvival : snakeColorNormal;
-    for(let s of snake){
-        ctx.fillRect(s.x*GRID_SIZE + (GRID_SIZE-SNAKE_SIZE)/2,
-                     s.y*GRID_SIZE + (GRID_SIZE-SNAKE_SIZE)/2,
-                     SNAKE_SIZE, SNAKE_SIZE);
-    }
-    
-    // яблоко
-    ctx.fillStyle = appleColor;
-    ctx.fillRect(apple.x*GRID_SIZE + (GRID_SIZE-APPLE_SIZE)/2,
-                 apple.y*GRID_SIZE + (GRID_SIZE-APPLE_SIZE)/2,
-                 APPLE_SIZE, APPLE_SIZE);
-}
-
-// логика движения
+let snake = [{x:5, y:5}];
+let apple = spawnApple();
 let path = [];
-function update(){
-    if(!path || path.length===0){
-        path = findPath();
+let survival = false;
+
+function spawnApple() {
+    let pos;
+    do {
+        pos = {x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS)};
+    } while(snake.some(s => s.x===pos.x && s.y===pos.y));
+    return pos;
+}
+
+function draw() {
+    ctx.fillStyle = '#151515';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // Draw apple
+    ctx.fillStyle = '#ee0a17';
+    ctx.fillRect(apple.x*GRID_SIZE + (GRID_SIZE-51)/2, apple.y*GRID_SIZE + (GRID_SIZE-51)/2, 51,51);
+
+    // Draw snake
+    ctx.fillStyle = survival ? '#b20c18' : '#3ac322';
+    snake.forEach((s,i) => {
+        ctx.fillRect(s.x*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, s.y*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, CELL_SIZE, CELL_SIZE);
+    });
+}
+
+function neighbors(node){
+    const deltas = [
+        {x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}
+    ];
+    return deltas.map(d=>({x: node.x+d.x, y: node.y+d.y}))
+                 .filter(n=>n.x>=0 && n.x<COLS && n.y>=0 && n.y<ROWS)
+                 .filter(n=>!snake.some(s=>s.x===n.x && s.y===n.y));
+}
+
+// Simple A* heuristic
+function heuristic(a,b){ return Math.abs(a.x-b.x)+Math.abs(a.y-b.y); }
+
+function findPath() {
+    const start = snake[0];
+    const goal = apple;
+    let open = [{node:start, g:0, f:heuristic(start,goal), parent:null}];
+    let closed = [];
+
+    while(open.length>0){
+        open.sort((a,b)=>a.f-b.f);
+        const current = open.shift();
+        if(current.node.x===goal.x && current.node.y===goal.y){
+            // reconstruct path
+            let p = [];
+            let c = current;
+            while(c){
+                p.unshift(c.node);
+                c = c.parent;
+            }
+            return p.slice(1); // exclude head
+        }
+        closed.push(current.node);
+        for(const n of neighbors(current.node)){
+            if(closed.some(c=>c.x===n.x && c.y===n.y)) continue;
+            let g = current.g+1;
+            let f = g + heuristic(n,goal);
+            if(open.some(o=>o.node.x===n.x && o.node.y===n.y && o.f<=f)) continue;
+            open.push({node:n,g,f,parent:current});
+        }
     }
-    
-    if(path && path.length>0){
+    return null; // no path
+}
+
+// Survival check: head must reach >=80% empty cells
+function safePath(pathToCheck){
+    if(!pathToCheck) return false;
+    const futureSnake = [...snake];
+    pathToCheck.forEach(p=>futureSnake.unshift(p));
+    let reachable = bfs(futureSnake[0], futureSnake);
+    const emptyCells = COLS*ROWS - futureSnake.length;
+    return reachable >= Math.floor(0.8*emptyCells);
+}
+
+// BFS to count reachable cells
+function bfs(startPos, occupied){
+    let queue=[startPos], visited=[`${startPos.x},${startPos.y}`], count=1;
+    while(queue.length>0){
+        let cur = queue.shift();
+        for(let n of neighbors(cur)){
+            if(!visited.includes(`${n.x},${n.y}`) && !occupied.some(s=>s.x===n.x && s.y===n.y)){
+                queue.push(n);
+                visited.push(`${n.x},${n.y}`);
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
+// Reverse A* (longest path)
+function reversedAStar() {
+    let start = snake[0], goal = apple;
+    let allPaths = [];
+    function dfs(path, visited){
+        let cur = path[path.length-1];
+        if(cur.x===goal.x && cur.y===goal.y){
+            allPaths.push([...path]);
+            return;
+        }
+        for(let n of neighbors(cur)){
+            if(!visited.some(v=>v.x===n.x && v.y===n.y)){
+                visited.push(n);
+                path.push(n);
+                dfs(path, visited);
+                path.pop();
+                visited.pop();
+            }
+        }
+    }
+    dfs([start],[...snake]);
+    if(allPaths.length===0) return null;
+    // longest path
+    allPaths.sort((a,b)=>b.length - a.length);
+    return allPaths[0].slice(1);
+}
+
+function update() {
+    // Choose path algorithm
+    if(!path || path.length===0){
+        let aStarPath = findPath();
+        if(aStarPath && safePath(aStarPath)){
+            path = aStarPath;
+            survival=false;
+        } else {
+            path = reversedAStar();
+            if(!path){
+                // survival mode
+                survival=true;
+                // move towards tail (last element)
+                path = [snake[snake.length-1]];
+            }
+        }
+    }
+
+    // Move
+    if(path.length>0){
         let next = path.shift();
         snake.unshift(next);
+
+        // Eat apple
         if(next.x===apple.x && next.y===apple.y){
-            // новое яблоко
-            do{
-                apple = {x:Math.floor(Math.random()*GRID_WIDTH), y:Math.floor(Math.random()*GRID_HEIGHT)};
-            }while(snake.some(s=>s.x===apple.x && s.y===apple.y));
-            path = findPath(); // пересчёт пути
+            apple = spawnApple();
+            path = []; // recalc path next tick
         } else {
             snake.pop();
         }
-    } else if(survivalMode){
-        // простой survival: идём за хвостом
-        let tail = snake[snake.length-1];
-        let dirs = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-        for(let d of dirs){
-            let nx = snake[0].x + d.x;
-            let ny = snake[0].y + d.y;
-            if(nx<0 || ny<0 || nx>=GRID_WIDTH || ny>=GRID_HEIGHT) continue;
-            if(!snake.some(s=>s.x===nx && s.y===ny)){
-                snake.unshift({x:nx,y:ny});
-                snake.pop();
-                break;
-            }
-        }
-        path = findPath(); // проверяем, доступен ли путь к яблоку
     }
-    
-    draw();
 }
 
-setInterval(update, 150);
+function gameLoop(){
+    update();
+    draw();
+    setTimeout(gameLoop, 200);
+}
+
+gameLoop();
 </script>
 </body>
 </html>
