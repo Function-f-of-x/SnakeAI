@@ -4,157 +4,142 @@
 <meta charset="UTF-8">
 <title>Snake AI</title>
 <style>
-  body { margin:0; background:#151515; display:flex; justify-content:center; align-items:center; height:100vh; }
-  canvas { background:#151515; display:block; }
+  body {
+    margin: 0;
+    background-color: #151515;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
+  canvas {
+    display: block;
+    background-color: #151515;
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
 const GRID_SIZE = 54;
 const SNAKE_SIZE = 48;
 const APPLE_SIZE = 51;
-
-const COLS = 10;
 const ROWS = 10;
+const COLS = 10;
 
-const NORMAL_COLOR = "#3ac322";
-const SURVIVAL_COLOR = "#b20c18";
-const APPLE_COLOR = "#ee0a17";
+canvas.width = COLS * GRID_SIZE;
+canvas.height = ROWS * GRID_SIZE;
 
-const canvas = document.getElementById('game');
-canvas.width = GRID_SIZE * COLS;
-canvas.height = GRID_SIZE * ROWS;
-const ctx = canvas.getContext('2d');
+let snake = [{x: 4, y: 4}];
+let apple = placeApple();
+let dir = {x: 0, y: 0};
+let path = [];
+let survival = false;
 
-let snake = [{x:5,y:5}];
-let apple = {x:2, y:3};
-let direction = {x:0, y:0};
-let survivalMode = false;
+function placeApple() {
+    let empty = [];
+    for (let y=0; y<ROWS; y++)
+        for (let x=0; x<COLS; x++)
+            if (!snake.some(s=>s.x===x && s.y===y)) empty.push({x,y});
+    return empty[Math.floor(Math.random()*empty.length)];
+}
 
-function draw(){
-    ctx.fillStyle = "#151515";
+function draw() {
+    ctx.fillStyle = '#151515';
     ctx.fillRect(0,0,canvas.width,canvas.height);
 
-    // яблоко
-    ctx.fillStyle = APPLE_COLOR;
-    ctx.fillRect(
-        apple.x*GRID_SIZE + (GRID_SIZE-APPLE_SIZE)/2,
-        apple.y*GRID_SIZE + (GRID_SIZE-APPLE_SIZE)/2,
-        APPLE_SIZE, APPLE_SIZE
-    );
+    // draw apple
+    ctx.fillStyle = '#ee0a17';
+    ctx.fillRect(apple.x*GRID_SIZE + (GRID_SIZE-APPLE_SIZE)/2, apple.y*GRID_SIZE + (GRID_SIZE-APPLE_SIZE)/2, APPLE_SIZE, APPLE_SIZE);
 
-    // змейка
-    ctx.fillStyle = survivalMode ? SURVIVAL_COLOR : NORMAL_COLOR;
+    // draw snake
     for(let i=0;i<snake.length;i++){
-        let s = snake[i];
-        ctx.fillRect(
-            s.x*GRID_SIZE + (GRID_SIZE-SNAKE_SIZE)/2,
-            s.y*GRID_SIZE + (GRID_SIZE-SNAKE_SIZE)/2,
-            SNAKE_SIZE, SNAKE_SIZE
-        );
+        ctx.fillStyle = survival ? '#b20c18' : '#3ac322';
+        ctx.fillRect(snake[i].x*GRID_SIZE + (GRID_SIZE-SNAKE_SIZE)/2,
+                     snake[i].y*GRID_SIZE + (GRID_SIZE-SNAKE_SIZE)/2,
+                     SNAKE_SIZE,SNAKE_SIZE);
     }
 }
 
-// проверка валидного хода
-function validMove(x,y){
-    if(x<0||y<0||x>=COLS||y>=ROWS) return false;
-    for(let seg of snake) if(seg.x===x && seg.y===y) return false;
-    return true;
+function neighbors(node) {
+    return [
+        {x: node.x+1, y: node.y},
+        {x: node.x-1, y: node.y},
+        {x: node.x, y: node.y+1},
+        {x: node.x, y: node.y-1},
+    ].filter(n=>n.x>=0 && n.x<COLS && n.y>=0 && n.y<ROWS && !snake.some(s=>s.x===n.x && s.y===n.y));
 }
 
-// BFS для проверки досягаемости 80% пустых клеток
-function reachableSpace(head){
-    let visited = Array.from({length:ROWS},()=>Array(COLS).fill(false));
-    let queue = [head];
-    visited[head.y][head.x]=true;
-    let count = 1;
+function bfs(start, goal) {
+    let queue = [{node:start,path:[]}], visited = new Set([start.x+','+start.y]);
     while(queue.length){
-        let {x,y} = queue.shift();
-        let moves = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-        for(let m of moves){
-            let nx = x + m.x, ny = y + m.y;
-            if(nx>=0 && ny>=0 && nx<COLS && ny<ROWS && !visited[ny][nx] && validMove(nx,ny)){
-                visited[ny][nx]=true;
-                queue.push({x:nx,y:ny});
-                count++;
+        let {node,path} = queue.shift();
+        if(node.x===goal.x && node.y===goal.y) return path.concat([node]);
+        for(let n of neighbors(node)){
+            let key = n.x+','+n.y;
+            if(!visited.has(key)){
+                visited.add(key);
+                queue.push({node:n,path:path.concat([node])});
             }
         }
     }
-    return count;
+    return null;
 }
 
-// простейший A* и Reversed A* (по расстоянию)
-function findPath(head,target,reversed=false){
-    let dx = target.x - head.x;
-    let dy = target.y - head.y;
-    let moveOptions = [];
-
-    // survival: если путь к яблоку недоступен, режим выживания
-    let reach = reachableSpace(head);
-    survivalMode = reach < Math.floor(0.8 * (COLS*ROWS - snake.length));
-
-    // если survival, просто ищем безопасный ход по очереди
-    if(survivalMode){
-        let moves = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-        for(let m of moves){
-            let nx = head.x + m.x;
-            let ny = head.y + m.y;
-            if(validMove(nx,ny)) return {x:nx, y:ny};
+function reachableCells(head) {
+    let visited = new Set([head.x+','+head.y]);
+    let stack = [head];
+    while(stack.length){
+        let node = stack.pop();
+        for(let n of neighbors(node)){
+            let key = n.x+','+n.y;
+            if(!visited.has(key)){
+                visited.add(key);
+                stack.push(n);
+            }
         }
-        return head; // тупик
     }
-
-    // обычный A* / Reversed A* (по оси X или Y)
-    if(reversed) { dx*=-1; dy*=-1; }
-
-    if(Math.abs(dx) >= Math.abs(dy)){
-        let nx = head.x + Math.sign(dx);
-        if(validMove(nx,head.y)) return {x:nx, y:head.y};
-    }
-    if(dy!==0){
-        let ny = head.y + Math.sign(dy);
-        if(validMove(head.x,ny)) return {x:head.x, y:ny};
-    }
-
-    // если прямого хода нет, пробуем любое допустимое
-    let moves = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-    for(let m of moves){
-        let nx = head.x + m.x;
-        let ny = head.y + m.y;
-        if(validMove(nx,ny)) return {x:nx, y:ny};
-    }
-
-    return head; // тупик
+    return visited.size;
 }
 
-function update(){
-    let head = snake[0];
+function findPath() {
+    let p = bfs(snake[0], apple);
+    if(!p) return null;
+    // check 80% rule
+    let virtualSnake = snake.slice();
+    let newHead = p[p.length-1];
+    virtualSnake.unshift(newHead);
+    if(virtualSnake.length>ROWS*COLS-1) virtualSnake.pop();
+    let cells = reachableCells(newHead);
+    if(cells/((ROWS*COLS)-virtualSnake.length)<0.8) return null;
+    return p;
+}
 
-    // выбираем стратегию
-    let newHead;
-    if(snake.length < 5){
-        newHead = findPath(head,apple,false); // маленькая змейка A*
-    } else {
-        newHead = findPath(head,apple,true); // средняя Reversed A*
+function update() {
+    if(path.length===0){
+        path = findPath();
+        if(!path){
+            survival = true;
+            // survival: just move along available cells
+            let nbs = neighbors(snake[0]);
+            if(nbs.length>0) path = [nbs[0]];
+        } else survival = false;
     }
-
-    snake.unshift(newHead);
-
-    // проверка поедания яблока
-    if(newHead.x===apple.x && newHead.y===apple.y){
-        // новое яблоко случайно
-        do {
-            apple = {x:Math.floor(Math.random()*COLS),y:Math.floor(Math.random()*ROWS)};
-        } while(!validMove(apple.x,apple.y));
-    } else {
-        snake.pop();
+    if(path.length>0){
+        let next = path.shift();
+        snake.unshift({x: next.x, y: next.y});
+        if(next.x===apple.x && next.y===apple.y){
+            apple = placeApple();
+            path = [];
+        } else snake.pop();
     }
-
     draw();
 }
 
-setInterval(update,200);
+setInterval(update, 200);
 </script>
 </body>
 </html>
