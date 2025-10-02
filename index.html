@@ -119,29 +119,58 @@ function bfs(startPos, occupied){
     return count;
 }
 
-function reversedAStar() {
-    let start = snake[0], goal = apple;
-    let allPaths = [];
-    function dfs(path, visited){
-        let cur = path[path.length-1];
-        if(cur.x===goal.x && cur.y===goal.y){
-            allPaths.push([...path]);
-            return;
+function reversedAStar(grid, start, goal) {
+    const width = grid[0].length;
+    const height = grid.length;
+
+    // создаём очередь для BFS с приоритетом длинного пути
+    let queue = [{ pos: start, path: [start] }];
+    let visited = Array.from({ length: height }, () => Array(width).fill(false));
+    visited[start.y][start.x] = true;
+
+    let longestPath = null;
+
+    while (queue.length > 0) {
+        // достаём последний элемент, чтобы идти «длинным» путем
+        let current = queue.pop();
+        let { pos, path } = current;
+
+        if (pos.x === goal.x && pos.y === goal.y) {
+            // если путь к яблоку найден, сохраняем его только если он длиннее текущего
+            if (!longestPath || path.length > longestPath.length) {
+                longestPath = path;
+            }
+            continue; // не останавливаемся — ищем более длинный
         }
-        for(let n of neighbors(cur)){
-            if(!visited.some(v=>v.x===n.x && v.y===n.y)){
-                visited.push(n);
-                path.push(n);
-                dfs(path, visited);
-                path.pop();
-                visited.pop();
+
+        // смещения по 4 направлениям (без диагоналей)
+        const dirs = [
+            { x: 0, y: -1 }, // вверх
+            { x: 1, y: 0 },  // вправо
+            { x: 0, y: 1 },  // вниз
+            { x: -1, y: 0 }  // влево
+        ];
+
+        for (let d of dirs) {
+            let nx = pos.x + d.x;
+            let ny = pos.y + d.y;
+
+            if (
+                nx >= 0 && nx < width &&
+                ny >= 0 && ny < height &&
+                !visited[ny][nx] &&
+                grid[ny][nx] === 0 // только пустые клетки
+            ) {
+                visited[ny][nx] = true;
+                queue.push({ pos: { x: nx, y: ny }, path: [...path, { x: nx, y: ny }] });
             }
         }
+
+        // сортировка очереди по длине пути, чтобы развивать длинный путь
+        queue.sort((a, b) => b.path.length - a.path.length);
     }
-    dfs([start],[...snake]);
-    if(allPaths.length===0) return null;
-    allPaths.sort((a,b)=>b.length - a.length);
-    return allPaths[0].slice(1);
+
+    return longestPath; // null, если пути нет
 }
 
 function update() {
