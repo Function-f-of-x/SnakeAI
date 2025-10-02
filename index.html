@@ -116,41 +116,53 @@ function safePath(pathToCheck){
 }
 
 function reversedAStar() {
-    const head = snake[0];
-    const visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
-    let longestPath = [];
+    const start = snake[0];
+    let path = [start];
+    let visited = Array.from({ length: ROWS }, () => Array(COLS).fill(false));
+    visited[start.y][start.x] = true;
 
-    function dfs(pos, path) {
-        visited[pos.y][pos.x] = true;
-        path.push(pos);
+    let current = start;
 
-        // Если дошли до яблока — проверяем, длиннее ли путь
-        if (pos.x === apple.x && pos.y === apple.y) {
-            if (path.length > longestPath.length) longestPath = [...path];
-        } else {
-            // Сортируем соседей так, чтобы двигаться в стороны максимально вдали от яблока
-            const dirs = neighbors(pos).sort((a, b) => {
-                return heuristic(b, apple) - heuristic(a, apple);
-            });
-            for (let n of dirs) {
-                if (!visited[n.y][n.x]) {
-                    // Кратковременный path для проверки 80%
-                    const futureSnake = [...path.map(p => ({ x: p.x, y: p.y })), ...snake.slice(0, snake.length - path.length)];
-                    if (bfs(n, futureSnake) >= Math.floor(0.8 * (COLS * ROWS - futureSnake.length))) {
-                        dfs(n, path);
-                    }
-                }
-            }
+    while(current.x !== apple.x || current.y !== apple.y) {
+        // Соседние клетки
+        const dirs = [
+            { x: 1, y: 0 },
+            { x: -1, y: 0 },
+            { x: 0, y: 1 },
+            { x: 0, y: -1 }
+        ];
+
+        let options = dirs
+            .map(d => ({ x: current.x + d.x, y: current.y + d.y }))
+            .filter(n => n.x >= 0 && n.x < COLS && n.y >= 0 && n.y < ROWS)
+            .filter(n => !snake.some(s => s.x === n.x && s.y === n.y))
+            .filter(n => !visited[n.y][n.x]);
+
+        if(options.length === 0) break; // тупик
+
+        // Выбираем клетку, которая дальше всего от яблока (жадный)
+        options.sort((a, b) => {
+            const da = heuristic(a, apple);
+            const db = heuristic(b, apple);
+            return db - da; // больше = дальше
+        });
+
+        // Берём первую
+        current = options[0];
+        visited[current.y][current.x] = true;
+        path.push(current);
+
+        // Проверка безопасности: если путь от головы после этого шага до хвоста теряет доступ к 80% пустых клеток, отменяем
+        const futureSnake = [current, ...snake];
+        if(bfs(current, futureSnake) < Math.floor(0.8*(COLS*ROWS - futureSnake.length))) {
+            path.pop();
+            break; // дальше идти нельзя
         }
-
-        path.pop();
-        visited[pos.y][pos.x] = false;
     }
 
-    dfs(head, []);
-    return longestPath.length > 0 ? longestPath.slice(1) : null;
+    if(path.length === 1) return null; // нет безопасного пути
+    return path.slice(1); // первый элемент — текущая голова
 }
-
 
 
 function update(){
