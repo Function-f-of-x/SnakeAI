@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Snake AI</title>
+<title>Snake AI Safe Paths</title>
 <style>
   body { margin:0; background:#000000; display:flex; justify-content:center; align-items:center; height:100vh; }
   canvas { background:#151515; display:block; }
@@ -16,11 +16,9 @@ const ctx = canvas.getContext('2d');
 
 const GRID_SIZE = 54;
 const CELL_SIZE = 48;
-const PADDING = GRID_SIZE - CELL_SIZE;
-
 const COLS = 10;
 const ROWS = 10;
-const TOTAL_CELLS = COLS * ROWS;
+const TOTAL_CELLS = COLS*ROWS;
 
 canvas.width = COLS * GRID_SIZE;
 canvas.height = ROWS * GRID_SIZE;
@@ -31,42 +29,68 @@ let path = [];
 let survival = false;
 let gameOver = false;
 
-function spawnApple() {
+// генерация яблока
+function spawnApple(){
     let pos;
     do {
         pos = {x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS)};
-    } while(snake.some(s => s.x===pos.x && s.y===pos.y));
+    } while(snake.some(s=>s.x===pos.x && s.y===pos.y));
     return pos;
 }
 
-function draw() {
+// отрисовка
+function draw(){
     ctx.fillStyle = '#151515';
     ctx.fillRect(0,0,canvas.width,canvas.height);
 
-    // Apple
+    // apple
     ctx.fillStyle = '#ee0a17';
     ctx.fillRect(apple.x*GRID_SIZE + (GRID_SIZE-51)/2, apple.y*GRID_SIZE + (GRID_SIZE-51)/2, 51,51);
 
-    // Snake
+    // snake
     ctx.fillStyle = gameOver ? '#808080' : (survival ? '#b20c18' : '#3ac322');
-    snake.forEach(s => {
+    snake.forEach((s,i)=>{
         ctx.fillRect(s.x*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, s.y*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, CELL_SIZE, CELL_SIZE);
     });
 }
 
+// соседние клетки
 function neighbors(node){
-    const deltas = [
-        {x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}
-    ];
+    const deltas = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
     return deltas.map(d=>({x: node.x+d.x, y: node.y+d.y}))
                  .filter(n=>n.x>=0 && n.x<COLS && n.y>=0 && n.y<ROWS)
                  .filter(n=>!snake.some(s=>s.x===n.x && s.y===n.y));
 }
 
+// эвристика для A*
 function heuristic(a,b){ return Math.abs(a.x-b.x)+Math.abs(a.y-b.y); }
 
-// Обычный A* с проверкой 80% доступных клеток
-function findPath() {
+// BFS для подсчёта доступных клеток
+function reachableCells(startPos, occupied){
+    const queue=[startPos];
+    const visited=new Set([`${startPos.x},${startPos.y}`]);
+    let count=1;
+
+    while(queue.length>0){
+        const cur = queue.shift();
+        const deltas = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+        for(let d of deltas){
+            const nx=cur.x+d.x, ny=cur.y+d.y;
+            if(nx<0||nx>=COLS||ny<0||ny>=ROWS) continue;
+            if(occupied.some(s=>s.x===nx&&s.y===ny)) continue;
+            const key=`${nx},${ny}`;
+            if(!visited.has(key)){
+                visited.add(key);
+                queue.push({x:nx,y:ny});
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
+// обычный A* с проверкой 80% после каждого шага
+function findPath(){
     const start = snake[0];
     const goal = apple;
     let open = [{node:start, g:0, f:heuristic(start,goal), parent:null}];
@@ -77,136 +101,115 @@ function findPath() {
         const current = open.shift();
 
         if(current.node.x===goal.x && current.node.y===goal.y){
-            let p = [];
-            let c = current;
-            while(c){
-                p.unshift(c.node);
-                c = c.parent;
-            }
-            p.shift();
-
-            const futureSnake = [...snake, ...p];
-            if(reachableCells(futureSnake[0], futureSnake) >= Math.floor(0.8*(COLS*ROWS - futureSnake.length))){
-                return p;
-            } else {
-                continue;
-            }
+            let p=[];
+            let c=current;
+            while(c){ p.unshift(c.node); c=c.parent; }
+            return p.slice(1);
         }
 
         closed.push(current.node);
+
         for(const n of neighbors(current.node)){
             if(closed.some(c=>c.x===n.x && c.y===n.y)) continue;
-            let g = current.g+1;
-            let f = g + heuristic(n,goal);
+
+            const futureSnake = [n,...snake];
+            const reachable = reachableCells(futureSnake[0], futureSnake);
+            const emptyCells = COLS*ROWS - futureSnake.length;
+            if(reachable < Math.floor(0.8*emptyCells)) continue;
+
+            let g=current.g+1;
+            let f=g+heuristic(n,goal);
             if(open.some(o=>o.node.x===n.x && o.node.y===n.y && o.f<=f)) continue;
+
             open.push({node:n,g,f,parent:current});
         }
     }
     return null;
 }
 
-// Reversed A* — ищет длиннейший безопасный путь
-function reversedAStar() {
+// Reversed A* — A* с приоритетом удаления от яблока + встроенная проверка 80%
+function reversedAStar(){
     const start = snake[0];
     const goal = apple;
-    let open = [{node:start, g:0, f:heuristic(goal,start), parent:null}];
+    let open = [{node:start, g:0, f:-heuristic(start,goal), parent:null}];
     let closed = [];
-    let longestPath = null;
 
     while(open.length>0){
-        open.sort((a,b)=>b.f-a.f); // отдаём приоритет удалению от яблока
+        // берём узел с максимальной f (удаляемся от яблока)
+        open.sort((a,b)=>b.f - a.f);
         const current = open.shift();
 
         if(current.node.x===goal.x && current.node.y===goal.y){
-            let p = [];
-            let c = current;
-            while(c){
-                p.unshift(c.node);
-                c = c.parent;
-            }
-            p.shift();
+            let p=[];
+            let c=current;
+            while(c){ p.unshift(c.node); c=c.parent; }
 
-            const futureSnake = [...snake, ...p];
-            if(reachableCells(futureSnake[0], futureSnake) >= Math.floor(0.8*(COLS*ROWS - futureSnake.length))){
-                if(!longestPath || p.length > longestPath.length) longestPath = p;
+            // проверка 80% после съедания
+            const futureSnake=[...snake,...p.slice(1)];
+            const emptyCells=COLS*ROWS-futureSnake.length;
+            if(reachableCells(futureSnake[0],futureSnake)>=Math.floor(0.8*emptyCells)){
+                return p.slice(1);
+            } else {
+                continue; // ищем другой путь
             }
-            continue;
         }
 
         closed.push(current.node);
 
         for(const n of neighbors(current.node)){
             if(closed.some(c=>c.x===n.x && c.y===n.y)) continue;
-            let g = current.g+1;
-            let f = g + heuristic(goal,n);
+
+            const futureSnake = [...snake,...current.path||[],n];
+            const emptyCells = COLS*ROWS - futureSnake.length;
+            if(reachableCells(n,futureSnake) < Math.floor(0.8*emptyCells)) continue;
+
+            let g=current.g+1;
+            let f=g - heuristic(n,goal); // минус, чтобы удаляться от яблока
             if(open.some(o=>o.node.x===n.x && o.node.y===n.y && o.f>=f)) continue;
-            open.push({node:n,g,f,parent:current});
+
+            open.push({node:n, g, f, parent:current, path:[...(current.path||[]), n]});
         }
     }
-
-    return longestPath;
+    return null;
 }
 
-// BFS для подсчёта доступных клеток
-function reachableCells(startPos, occupied) {
-    const queue = [startPos];
-    const visited = new Set([`${startPos.x},${startPos.y}`]);
-    let count = 1;
-
-    while(queue.length>0){
-        const cur = queue.shift();
-        for(const n of neighbors(cur)){
-            if(!visited.has(`${n.x},${n.y}`) && !occupied.some(s=>s.x===n.x && s.y===n.y)){
-                queue.push(n);
-                visited.add(`${n.x},${n.y}`);
-                count++;
-            }
-        }
-    }
-    return count;
-}
-
-function update() {
+// обновление змейки
+function update(){
     if(gameOver) return;
-
-    const lengthThreshold = Math.floor(TOTAL_CELLS/8);
+    const threshold = Math.floor(TOTAL_CELLS/8);
 
     if(!path || path.length===0){
-        let chosenPath = null;
+        let chosenPath=null;
 
-        if(snake.length <= lengthThreshold){
-            chosenPath = findPath();
-            survival=false;
+        if(snake.length <= threshold){
+            chosenPath=findPath();
+            if(chosenPath) survival=false;
         } else {
-            chosenPath = reversedAStar();
-            survival=false;
+            chosenPath=reversedAStar();
+            if(chosenPath) survival=false;
         }
 
         if(!chosenPath){
-            // Survival mode
+            // survival mode
             survival=true;
-            const tail = snake[snake.length-1];
             let freeNeighbors = neighbors(snake[0]);
-            if(freeNeighbors.length>0) chosenPath = [freeNeighbors[0]];
-            else chosenPath = [tail];
+            if(freeNeighbors.length>0) chosenPath=[freeNeighbors[0]];
+            else chosenPath=[snake[snake.length-1]]; // forced
         }
 
-        path = chosenPath;
+        path=chosenPath;
     }
 
     if(path.length>0){
-        let next = path.shift();
-
-        // Check collision
+        let next=path.shift();
         if(snake.some(s=>s.x===next.x && s.y===next.y)){
-            gameOver = true;
-            return;
+            gameOver=true; return;
         }
 
         snake.unshift(next);
 
         if(next.x===apple.x && next.y===apple.y){
-            apple = spawnApple();
+            apple=spawnApple();
             path=[];
         } else {
             snake.pop();
@@ -214,10 +217,11 @@ function update() {
     }
 }
 
+// игровой цикл
 function gameLoop(){
     update();
     draw();
-    setTimeout(gameLoop, 200);
+    setTimeout(gameLoop,200);
 }
 
 gameLoop();
