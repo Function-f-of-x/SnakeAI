@@ -116,32 +116,113 @@ class Search {
 
     heuristic(a,b){return abs(a.x-b.x)+abs(a.y-b.y);}
 
-    AStar(maze,start,goal){
-        let open=[{node:start,g:0,f:this.heuristic(start,goal),parent:null}];
-        let closed=[];
-        while(open.length>0){
-            open.sort((a,b)=>a.f-b.f); let current=open.shift();
-            if(current.node.x===goal.x && current.node.y===goal.y){
-                let p=[]; let c=current; while(c){p.unshift(c.node); c=c.parent;}
-                const futureSnake=[...this.snake.body,...p.slice(1)];
-                const emptyCells=40*20-futureSnake.length;
-                if(this.reachableCells(futureSnake[0],futureSnake)>=Math.floor(0.8*emptyCells)) return p.slice(1);
-                else continue;
-            }
-            closed.push(current.node);
-            for(let n of this.neighbors(current.node,maze)){
-                if(closed.some(c=>c.x===n.x && c.y===n.y)) continue;
-                const futureSnake=[...this.snake.body,n];
-                const emptyCells=40*20-futureSnake.length;
-                if(this.reachableCells(n,futureSnake)<Math.floor(0.8*emptyCells)) continue;
-                let g=current.g+1;
-                let f=g+this.heuristic(n,goal);
-                if(open.some(o=>o.node.x===n.x && o.node.y===n.y && o.f<=f)) continue;
-                open.push({node:n,g,f,parent:current});
+    AStar(maze, start, goal) {
+    let start_node = new Node(start.x, start.y);
+    let end_node = new Node(goal.x, goal.y);
+    let open_list = [];
+    let closed_list = [];
+    open_list.push(start_node);
+    let possible_paths = [];
+    const adjacent_squares = [
+        [0, -1],
+        [0, 1],
+        [-1, 0],
+        [1, 0],
+    ];
+
+    while (open_list.length > 0) {
+        // Найти узел с наименьшей стоимостью f
+        let current_node = open_list[0];
+        let current_index = 0;
+        for (let i = 1; i < open_list.length; i++) {
+            if (open_list[i].f < current_node.f) {
+                current_node = open_list[i];
+                current_index = i;
             }
         }
-        return [];
+
+        open_list.splice(current_index, 1);
+        closed_list.push(current_node);
+
+        // Если достигли цели
+        if (current_node.equals(end_node)) {
+            let path = [];
+            let current = current_node;
+            while (current != null) {
+                path.push({x: current.x, y: current.y}); // возвращаем plain объекты, как раньше
+                current = current.parent;
+            }
+            path.reverse();
+            // Проверка безопасности: имитируем змею после этого пути
+            const futureSnake = [...this.snake.body, ...path.slice(1)];
+            const emptyCells = 40 * 20 - futureSnake.length;
+            if (this.reachableCells(futureSnake[0], futureSnake) >= Math.floor(0.8 * emptyCells)) {
+                possible_paths.push(path);
+            }
+            // Не выходим сразу — продолжаем искать другие пути (на случай, если найдётся короче)
+        }
+
+        // Генерация соседей
+        let children = [];
+        for (let i = 0; i < adjacent_squares.length; i++) {
+            let nx = current_node.x + adjacent_squares[i][0];
+            let ny = current_node.y + adjacent_squares[i][1];
+            if (nx >= 0 && nx < 40 && ny >= 0 && ny < 20) {
+                if (maze[ny][nx] !== -1) { // не стена (тело змеи)
+                    let new_node = new Node(nx, ny);
+                    children.push(new_node);
+                }
+            }
+        }
+
+        for (let child of children) {
+            // Пропустить, если в closed_list
+            let inClosed = closed_list.some(node => node.equals(child));
+            if (inClosed) continue;
+
+            // Расчёт g, h, f
+            child.g = current_node.g + 1;
+            child.h = this.heuristic(child, end_node);
+            child.f = child.g + child.h;
+            child.parent = current_node;
+
+            // Проверка: безопасен ли этот шаг?
+            const futureSnake = [...this.snake.body, {x: child.x, y: child.y}];
+            const emptyCells = 40 * 20 - futureSnake.length;
+            if (this.reachableCells({x: child.x, y: child.y}, futureSnake) < Math.floor(0.8 * emptyCells)) {
+                continue; // пропустить небезопасный узел
+            }
+
+            // Проверка в open_list
+            let inOpen = false;
+            for (let i = 0; i < open_list.length; i++) {
+                if (open_list[i].equals(child)) {
+                    if (child.g < open_list[i].g) {
+                        open_list[i] = child; // обновить, если лучше
+                    }
+                    inOpen = true;
+                    break;
+                }
+            }
+
+            if (!inOpen) {
+                open_list.push(child);
+            }
+        }
     }
+
+    // Найти самый короткий безопасный путь
+    if (possible_paths.length === 0) return [];
+
+    let shortest = possible_paths[0];
+    for (let i = 1; i < possible_paths.length; i++) {
+        if (possible_paths[i].length < shortest.length) {
+            shortest = possible_paths[i];
+        }
+    }
+
+    return shortest.slice(1); // убираем стартовую позицию (голову), как раньше
+}
 
 
     reversedAStar(maze, start, end) {
