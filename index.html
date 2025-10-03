@@ -167,11 +167,11 @@ function update(){
         let chosenPath=null;
 
         if(snake.length <= threshold){
-            let p=findPath();
-            if(p) { chosenPath=p; survival=false; }
+            chosenPath=findPath();
+            if(chosenPath) { survival=false; }
         } else {
-            let p=reversedAStar();
-            if(p) { chosenPath=p; survival=false; }
+            chosenPath=reversedAStar();
+            if(chosenPath) { survival=false; }
         }
 
         if(!chosenPath){
