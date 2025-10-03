@@ -121,42 +121,59 @@ function findPath(){
     return null;
 }
 
-function reversedAStar(){
+function reversedAStar() {
     const start = snake[0];
-    let queue = [{pos:start, path:[start]}];
-    let visited = Array.from({length:ROWS},()=>Array(COLS).fill(false));
-    visited[start.y][start.x]=true;
-    let longestPath=null;
+    const goal = apple;
+    const lengthThreshold = Math.floor(TOTAL_CELLS / 8);
 
-    while(queue.length>0){
-        let current = queue.pop();
-        let {pos,path} = current;
+    // Используем стек для DFS, приоритет: чем дальше от яблока, тем раньше идём
+    let stack = [{ pos: start, path: [start], visited: new Set([`${start.x},${start.y}`]) }];
+    let bestPath = null;
 
-        if(pos.x===apple.x && pos.y===apple.y){
-            if(!longestPath || path.length>longestPath.length) longestPath=path;
+    while (stack.length > 0) {
+        let current = stack.pop();
+        const { pos, path, visited } = current;
+
+        // Если дошли до яблока
+        if (pos.x === goal.x && pos.y === goal.y) {
+            // Генерируем змейку после пути
+            const futureSnake = [...snake];
+            path.slice(1).forEach(p => futureSnake.unshift(p));
+            // Проверяем 80%
+            const reachable = bfs(futureSnake[0], futureSnake);
+            const emptyCells = COLS * ROWS - futureSnake.length;
+            if (reachable >= Math.floor(0.8 * emptyCells)) {
+                if (!bestPath || path.length > bestPath.length) {
+                    bestPath = path.slice(1); // не включаем голову
+                }
+            }
             continue;
         }
 
-        const deltas=[{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-        for(let d of deltas){
-            let nx=pos.x+d.x, ny=pos.y+d.y;
-            if(nx<0 || nx>=COLS || ny<0 || ny>=ROWS) continue;
-            if(visited[ny][nx]) continue;
-            if(snake.some(s=>s.x===nx && s.y===ny)) continue;
+        // Соседние клетки
+        const dirs = [
+            { x: 1, y: 0 },
+            { x: -1, y: 0 },
+            { x: 0, y: 1 },
+            { x: 0, y: -1 }
+        ];
 
-            const futureSnake = [...path,[{x:nx,y:ny}]];
-            const reachable = bfs({x:nx,y:ny}, futureSnake);
-            const emptyCells = COLS*ROWS - futureSnake.length;
-            if(reachable < Math.floor(0.8*emptyCells)) continue; // 80% safety
+        // Сортируем по удалению от яблока (чтобы идти «дальше» первым)
+        const neighborsSorted = dirs
+            .map(d => ({ x: pos.x + d.x, y: pos.y + d.y }))
+            .filter(n => n.x >= 0 && n.x < COLS && n.y >= 0 && n.y < ROWS)
+            .filter(n => !snake.some(s => s.x === n.x && s.y === n.y))
+            .filter(n => !visited.has(`${n.x},${n.y}`))
+            .sort((a, b) => heuristic(b, goal) - heuristic(a, goal)); // чем дальше, тем раньше
 
-            visited[ny][nx]=true;
-            queue.push({pos:{x:nx,y:ny}, path:[...path,{x:nx,y:ny}]});
+        for (let n of neighborsSorted) {
+            const newVisited = new Set(visited);
+            newVisited.add(`${n.x},${n.y}`);
+            stack.push({ pos: n, path: [...path, n], visited: newVisited });
         }
-
-        queue.sort((a,b)=>b.path.length-a.path.length); // prioritize longest
     }
 
-    return longestPath ? longestPath.slice(1) : null;
+    return bestPath;
 }
 
 function update(){
