@@ -2,182 +2,206 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Snake AI — Smart Paths</title>
+<title>Snake AI Safe Paths</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.3.1/lib/p5.js"></script>
 <style>
   body { margin:0; background:#000000; display:flex; justify-content:center; align-items:center; height:100vh; }
-  canvas { background:#151515; display:block; }
+  canvas { display:block; }
 </style>
 </head>
 <body>
-<canvas id="game"></canvas>
 <script>
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+// ======= Apple class =======
+class Apple {
+    constructor() {
+        this.boxes = [];
+        for (let i = 0; i < 40; i++) {
+            for (let j = 0; j < 20; j++) {
+                this.boxes.push(createVector(i, j));
+            }
+        }
+        this.generate([createVector(0,0), createVector(1,0), createVector(2,0)]);
+    }
+    generate(snake_body) {
+        const empty_boxes = this.boxes.filter(v=>{
+            for (let s of snake_body) if (v.x===s.x && v.y===s.y) return false;
+            return true;
+        });
+        if (empty_boxes.length===0) return false;
+        let pos = empty_boxes[int(random(0, empty_boxes.length))];
+        this.x = pos.x; this.y = pos.y;
+        return true;
+    }
+    show() {
+        fill('#ee0a17'); noStroke();
+        rect(this.x*30, this.y*30, 30, 30);
+    }
+}
 
-const GRID_SIZE = 54;
-const CELL_SIZE = 48;
+// ======= Snake class =======
+class Snake {
+    constructor() {
+        this.body = [];
+        for (let i=0;i<3;i++) this.body[i]=createVector(i,0);
+        this.x_dir=1; this.y_dir=0;
+        this.path = [];
+    }
+    getHead() { return this.body[this.body.length-1]; }
+    getTail() { return this.body[0]; }
+    changeDirection(x,y){ if (!(abs(this.x_dir-x)==2||abs(this.y_dir-y)==2)){this.x_dir=x;this.y_dir=y;} }
+    up(){this.changeDirection(0,-1);}
+    down(){this.changeDirection(0,1);}
+    left(){this.changeDirection(-1,0);}
+    right(){this.changeDirection(1,0);}
+    show(){
+        fill('#3ac322'); noStroke();
+        for (let s of this.body) rect(s.x*30, s.y*30,30,30);
+    }
+}
 
-const COLS = 10;
-const ROWS = 10;
-const TOTAL_CELLS = COLS * ROWS;
+// ======= Node class =======
+class Node{
+    constructor(x,y){this.x=x;this.y=y;this.parent=null;this.f=0;this.g=0;this.h=0;}
+    equals(other){return this.x===other.x && this.y===other.y;}
+}
 
-canvas.width = COLS * GRID_SIZE;
-canvas.height = ROWS * GRID_SIZE;
+// ======= Search class =======
+class Search {
+    constructor(snake, apple){this.snake=snake;this.apple=apple;}
+    
+    refreshMaze(){
+        let maze=[]; for(let j=0;j<20;j++){ let row=[]; for(let i=0;i<40;i++) row.push(0); maze.push(row);}
+        for(let s of this.snake.body) maze[s.y][s.x]=-1;
+        let head=this.snake.getHead(), tail=this.snake.getTail();
+        maze[head.y][head.x]=1; maze[tail.y][tail.x]=2;
+        return maze;
+    }
 
-let snake = [{x:5, y:5}];
-let apple = spawnApple();
-let path = [];
-let gameOver = false;
+    getPath(){
+        let maze=this.refreshMaze();
+        let start,end;
+        for(let j=0;j<20;j++) for(let i=0;i<40;i++){
+            if(maze[j][i]==1) start={x:i,y:j};
+            else if(maze[j][i]==2) end={x:i,y:j};
+        }
+        const threshold=Math.floor(40*20/8);
+        if(this.snake.body.length <= threshold){
+            this.snake.path=this.AStar(maze,start,this.apple);
+        } else {
+            this.snake.path=this.reversedAStar(maze,start,end);
+        }
+    }
 
-function spawnApple(){
-    let pos;
-    do {
-        pos = {x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS)};
-    } while(snake.some(s=>s.x===pos.x && s.y===pos.y));
-    return pos;
+    neighbors(node,maze){
+        const deltas=[{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+        return deltas.map(d=>({x:node.x+d.x,y:node.y+d.y}))
+                     .filter(n=>n.x>=0&&n.x<40&&n.y>=0&&n.y<20)
+                     .filter(n=>maze[n.y][n.x]!=-1);
+    }
+
+    reachableCells(start, occupied){
+        const queue=[start]; const visited=new Set([`${start.x},${start.y}`]); let count=1;
+        while(queue.length>0){
+            let cur=queue.shift();
+            const deltas=[{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+            for(let d of deltas){
+                let nx=cur.x+d.x, ny=cur.y+d.y;
+                if(nx<0||nx>=40||ny<0||ny>=20) continue;
+                if(occupied.some(s=>s.x===nx&&s.y===ny)) continue;
+                const key=`${nx},${ny}`; if(!visited.has(key)){visited.add(key);queue.push({x:nx,y:ny});count++;}
+            }
+        }
+        return count;
+    }
+
+    heuristic(a,b){return abs(a.x-b.x)+abs(a.y-b.y);}
+
+    AStar(maze,start,goal){
+        let open=[{node:start,g:0,f:this.heuristic(start,goal),parent:null}];
+        let closed=[];
+        while(open.length>0){
+            open.sort((a,b)=>a.f-b.f); let current=open.shift();
+            if(current.node.x===goal.x && current.node.y===goal.y){
+                let p=[]; let c=current; while(c){p.unshift(c.node); c=c.parent;}
+                const futureSnake=[...this.snake.body,...p.slice(1)];
+                const emptyCells=40*20-futureSnake.length;
+                if(this.reachableCells(futureSnake[0],futureSnake)>=Math.floor(0.8*emptyCells)) return p.slice(1);
+                else continue;
+            }
+            closed.push(current.node);
+            for(let n of this.neighbors(current.node,maze)){
+                if(closed.some(c=>c.x===n.x && c.y===n.y)) continue;
+                const futureSnake=[...this.snake.body,n];
+                const emptyCells=40*20-futureSnake.length;
+                if(this.reachableCells(n,futureSnake)<Math.floor(0.8*emptyCells)) continue;
+                let g=current.g+1;
+                let f=g+this.heuristic(n,goal);
+                if(open.some(o=>o.node.x===n.x && o.node.y===n.y && o.f<=f)) continue;
+                open.push({node:n,g,f,parent:current});
+            }
+        }
+        return [];
+    }
+
+    reversedAStar(maze,start,end){
+        let open=[{node:start,g:0,f:-this.heuristic(start,end),parent:null,path:[] }];
+        let closed=[];
+        while(open.length>0){
+            open.sort((a,b)=>b.f-a.f);
+            let current=open.shift();
+            if(current.node.x===end.x && current.node.y===end.y){
+                const futureSnake=[...this.snake.body,...current.path.slice(1)];
+                const emptyCells=40*20-futureSnake.length;
+                if(this.reachableCells(futureSnake[0],futureSnake)>=Math.floor(0.8*emptyCells)) return current.path.slice(1);
+            }
+            closed.push(current.node);
+            for(let n of this.neighbors(current.node,maze)){
+                if(closed.some(c=>c.x===n.x && c.y===n.y)) continue;
+                let path=[...current.path,n];
+                const futureSnake=[...this.snake.body,...path];
+                const emptyCells=40*20-futureSnake.length;
+                if(this.reachableCells(n,futureSnake)<Math.floor(0.8*emptyCells)) continue;
+                let g=current.g+1, f=g-this.heuristic(n,end);
+                if(open.some(o=>o.node.x===n.x && o.node.y===n.y && o.f>=f)) continue;
+                open.push({node:n,g,f,parent:current,path:path});
+            }
+        }
+        return [];
+    }
+}
+
+// ======= p5.js setup =======
+let snake, apple, search;
+function setup(){
+    createCanvas(1200,600);
+    snake=new Snake();
+    apple=new Apple();
+    search=new Search(snake,apple);
+    search.getPath();
+    frameRate(10);
 }
 
 function draw(){
-    ctx.fillStyle = '#151515';
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-
-    // apple
-    ctx.fillStyle = '#ee0a17';
-    ctx.fillRect(apple.x*GRID_SIZE + (GRID_SIZE-51)/2, apple.y*GRID_SIZE + (GRID_SIZE-51)/2, 51, 51);
-
-    // snake
-    ctx.fillStyle = gameOver ? '#808080' : '#3ac322';
-    snake.forEach(s=>{
-        ctx.fillRect(s.x*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, s.y*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, CELL_SIZE, CELL_SIZE);
-    });
+    background('#151515');
+    apple.show();
+    snake.show();
+    updateSnake();
 }
 
-function neighbors(node){
-    const deltas = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
-    return deltas.map(d=>({x: node.x+d.x, y: node.y+d.y}))
-                 .filter(n=>n.x>=0 && n.x<COLS && n.y>=0 && n.y<ROWS)
-                 .filter(n=>!snake.some(s=>s.x===n.x && s.y===n.y));
-}
-
-function heuristic(a,b){ return Math.abs(a.x-b.x)+Math.abs(a.y-b.y); }
-
-function bfs(startPos, occupied){
-    let queue=[startPos], visited=new Set([`${startPos.x},${startPos.y}`]), count=1;
-    while(queue.length>0){
-        let cur = queue.shift();
-        for(let d of [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}]){
-            let nx=cur.x+d.x, ny=cur.y+d.y;
-            if(nx<0||nx>=COLS||ny<0||ny>=ROWS) continue;
-            if(occupied.some(s=>s.x===nx&&s.y===ny)) continue;
-            const key=`${nx},${ny}`;
-            if(!visited.has(key)){
-                visited.add(key);
-                queue.push({x:nx,y:ny});
-                count++;
-            }
+function updateSnake(){
+    if(snake.path.length>0){
+        let next=snake.path.shift();
+        snake.body.push(createVector(next.x,next.y));
+        if(next.x===apple.x && next.y===apple.y){
+            apple.generate(snake.body);
+            search.getPath();
+        } else {
+            snake.body.shift();
         }
+    } else {
+        search.getPath();
     }
-    return count;
 }
-
-function checkSafePath(path){
-    if(!path) return false;
-    let futureSnake = [...snake];
-    for(let step of path){
-        futureSnake.unshift(step);
-        if(step.x===apple.x && step.y===apple.y) break;
-        else futureSnake.pop();
-    }
-    const reachable = bfs(futureSnake[0], futureSnake);
-    const emptyCells = COLS*ROWS - futureSnake.length;
-    return reachable >= Math.floor(0.8*emptyCells);
-}
-
-// обычный A*
-function aStar(){
-    const start = snake[0];
-    const goal = apple;
-    let open=[{node:start,g:0,f:heuristic(start,goal),parent:null}];
-    let closed=[];
-
-    while(open.length>0){
-        open.sort((a,b)=>a.f-b.f);
-        const current=open.shift();
-        if(current.node.x===goal.x && current.node.y===goal.y){
-            let p=[],c=current;
-            while(c){p.unshift(c.node);c=c.parent;}
-            return checkSafePath(p.slice(1))?p.slice(1):null;
-        }
-        closed.push(current.node);
-        for(const n of neighbors(current.node)){
-            if(closed.some(c=>c.x===n.x&&c.y===n.y)) continue;
-            let g=current.g+1;
-            let f=g+heuristic(n,goal);
-            if(open.some(o=>o.node.x===n.x&&o.node.y===n.y&&o.f<=f)) continue;
-            open.push({node:n,g,f,parent:current});
-        }
-    }
-    return null;
-}
-
-// reversed A* (длиннейший путь)
-function reversedAStar(){
-    const start = snake[0];
-    const goal = apple;
-    let open=[{node:start,g:0,f:heuristic(start,goal),parent:null}];
-    let closed=[];
-    let best=null;
-
-    while(open.length>0){
-        open.sort((a,b)=>b.f-a.f);
-        const current=open.shift();
-        if(current.node.x===goal.x && current.node.y===goal.y){
-            let p=[],c=current;
-            while(c){p.unshift(c.node);c=c.parent;}
-            if(!best || p.length>best.length) best=p;
-            continue;
-        }
-        closed.push(current.node);
-        for(const n of neighbors(current.node)){
-            if(closed.some(c=>c.x===n.x&&c.y===n.y)) continue;
-            let g=current.g+1;
-            let f=g+heuristic(n,goal);
-            if(open.some(o=>o.node.x===n.x&&o.node.y===n.y&&o.f>=f)) continue;
-            open.push({node:n,g,f,parent:current});
-        }
-    }
-    return best && checkSafePath(best.slice(1)) ? best.slice(1) : null;
-}
-
-function update(){
-    if(gameOver) return;
-
-    if(!path || path.length===0){
-        let chosen=null;
-        let threshold=Math.floor(TOTAL_CELLS/8);
-        if(snake.length < threshold) chosen=aStar();
-        else chosen=reversedAStar();
-
-        if(!chosen){gameOver=true; return;}
-        path=chosen;
-    }
-
-    let next=path.shift();
-    if(snake.some(s=>s.x===next.x&&s.y===next.y)){gameOver=true;return;}
-    snake.unshift(next);
-    if(next.x===apple.x && next.y===apple.y){
-        apple=spawnApple();
-        path=[];
-    } else snake.pop();
-}
-
-function gameLoop(){
-    update();
-    draw();
-    setTimeout(gameLoop,200);
-}
-
-gameLoop();
 </script>
 </body>
 </html>
