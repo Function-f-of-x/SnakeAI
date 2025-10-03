@@ -1,220 +1,207 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Snake AI Hybrid</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <meta charset="UTF-8">
+  <title>Snake AI</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+  <style>
+    body { margin: 0; background: black; }
+    canvas { display: block; margin: auto; }
+  </style>
 </head>
 <body>
 <script>
-const COLS = 10;
-const ROWS = 10;
-const CELL_SIZE = 48;
-const GRID_SIZE = 54;
-const TOTAL_CELLS = COLS * ROWS;
-
-let snake, apple, search, path = [];
-let survival = false;
-let gameOver = false;
+let rez = 20;
+let snake;
+let food;
+let cols, rows;
 
 function setup() {
-  createCanvas(COLS * GRID_SIZE, ROWS * GRID_SIZE);
-  frameRate(8);
-  snake = new Snake(floor(COLS/2), floor(ROWS/2));
-  apple = new Apple();
-  search = new Search();
+  createCanvas(600, 600);
+  frameRate(15);
+  cols = floor(width / rez);
+  rows = floor(height / rez);
+  snake = new Snake();
+  food = new Food();
 }
 
 function draw() {
-  background("#000000");
-
-  // поле
-  fill("#151515");
-  rect(0,0,width,height);
-
-  // обновление
-  if (!gameOver) update();
-
-  // отрисовка яблока
-  fill("#ee0a17");
-  rect(apple.x * GRID_SIZE + (GRID_SIZE-51)/2, apple.y * GRID_SIZE + (GRID_SIZE-51)/2, 51, 51);
-
-  // отрисовка змеи
-  fill(gameOver ? "#808080" : (survival ? "#b20c18" : "#3ac322"));
-  for (let s of snake.body) {
-    rect(s.x*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, s.y*GRID_SIZE + (GRID_SIZE-CELL_SIZE)/2, CELL_SIZE, CELL_SIZE);
-  }
+  background(0);
+  snake.update();
+  snake.show();
+  food.show();
 }
 
-// --- классы ---
 class Snake {
-  constructor(x,y) {
-    this.body=[{x:x,y:y}];
+  constructor() {
+    this.body = [createVector(floor(cols / 2), floor(rows / 2))];
+    this.len = 1;
+    this.dir = createVector(0, 0);
   }
-  head(){ return this.body[0]; }
-  move(next, eat){
-    this.body.unshift(next);
-    if(!eat) this.body.pop();
+
+  update() {
+    if (this.body.length === 0) return;
+
+    let head = this.body[this.body.length - 1].copy();
+
+    // Решение куда двигаться
+    let path;
+    if (this.body.length < (cols * rows) / 8) {
+      path = aStar(this.getMaze(), head, food.pos);
+    } else {
+      path = reversedAStar(this.getMaze(), head, food.pos);
+      if (!path || !this.survivalCheck(path)) {
+        path = aStar(this.getMaze(), head, food.pos);
+      }
+    }
+
+    if (path && path.length > 1) {
+      head = path[1].copy();
+    }
+
+    // Проверка на яблоко
+    if (head.equals(food.pos)) {
+      this.body.push(head);
+      this.len++;
+      food = new Food();
+    } else {
+      this.body.shift();
+      this.body.push(head);
+    }
+  }
+
+  getMaze() {
+    let maze = Array(rows).fill().map(() => Array(cols).fill(0));
+    for (let p of this.body) {
+      maze[p.y][p.x] = 1;
+    }
+    return maze;
+  }
+
+  survivalCheck(path) {
+    let sim = this.body.map(v => v.copy());
+    let head = sim[sim.length - 1].copy();
+    for (let i = 1; i < path.length; i++) {
+      head = path[i].copy();
+      sim.push(head);
+      if (sim.length > this.len + 1) sim.shift();
+    }
+    return sim.length >= 0.8 * cols * rows;
+  }
+
+  show() {
+    for (let i = 0; i < this.body.length; i++) {
+      fill(i === this.body.length - 1 ? "#00FF00" : "#00AAFF");
+      noStroke();
+      rect(this.body[i].x * rez, this.body[i].y * rez, rez, rez);
+    }
   }
 }
 
-class Apple {
-  constructor(){
-    this.spawn();
+class Food {
+  constructor() {
+    this.pos = this.randomPos();
   }
-  spawn(){
-    let pos;
-    do{
-      pos={x:floor(random(COLS)), y:floor(random(ROWS))};
-    }while(snake.body.some(s=>s.x===pos.x && s.y===pos.y));
-    this.x=pos.x; this.y=pos.y;
+  randomPos() {
+    return createVector(floor(random(cols)), floor(random(rows)));
   }
-}
-
-// --- поиск ---
-class Node {
-  constructor(x,y,parent=null){
-    this.x=x; this.y=y;
-    this.parent=parent;
-    this.g=0; this.h=0; this.f=0;
-  }
-  getNeighbors(){
-    const deltas=[[1,0],[-1,0],[0,1],[0,-1]];
-    let result=[];
-    for(let [dx,dy] of deltas){
-      let nx=this.x+dx, ny=this.y+dy;
-      if(nx>=0 && nx<COLS && ny>=0 && ny<ROWS){
-        if(!snake.body.some(s=>s.x===nx && s.y===ny))
-          result.push(new Node(nx,ny,this));
-      }
-    }
-    return result;
+  show() {
+    fill("#FF0000");
+    noStroke();
+    rect(this.pos.x * rez, this.pos.y * rez, rez, rez);
   }
 }
 
-class Search {
-  heuristic(a,b){ return abs(a.x-b.x)+abs(a.y-b.y); }
+// A* минимальный путь
+function aStar(maze, start, end) {
+  let open = [];
+  let closed = [];
+  open.push({pos: start, g:0, f:heuristic(start,end), parent:null});
 
-  bfs(start, occupied){
-    let queue=[start], visited=new Set([`${start.x},${start.y}`]), count=1;
-    while(queue.length>0){
-      let cur=queue.shift();
-      for(let [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
-        let nx=cur.x+dx, ny=cur.y+dy;
-        if(nx<0||nx>=COLS||ny<0||ny>=ROWS) continue;
-        if(occupied.some(s=>s.x===nx && s.y===ny)) continue;
-        let key=`${nx},${ny}`;
-        if(!visited.has(key)){
-          visited.add(key);
-          queue.push({x:nx,y:ny});
-          count++;
-        }
+  while (open.length > 0) {
+    let current = open.reduce((a,b) => a.f < b.f ? a : b);
+    if (current.pos.equals(end)) {
+      let path = [];
+      while (current) {
+        path.unshift(current.pos);
+        current = current.parent;
+      }
+      return path;
+    }
+    open = open.filter(n => n !== current);
+    closed.push(current);
+
+    for (let n of neighbors(current.pos)) {
+      if (maze[n.y][n.x] === 1 && !(n.equals(end))) continue;
+      if (closed.find(c => c.pos.equals(n))) continue;
+      let g = current.g + 1;
+      let existing = open.find(o => o.pos.equals(n));
+      if (!existing) {
+        open.push({pos:n, g:g, f:g+heuristic(n,end), parent:current});
+      } else if (g < existing.g) {
+        existing.g = g;
+        existing.f = g + heuristic(n,end);
+        existing.parent = current;
       }
     }
-    return count;
   }
-
-  safeCheck(path){
-    if(path.length===0) return false;
-    let simSnake=[...snake.body];
-    for(let p of path){
-      simSnake.unshift(p);
-      if(p.x===apple.x && p.y===apple.y) break;
-      simSnake.pop();
-    }
-    let empty=TOTAL_CELLS-simSnake.length;
-    let reach=this.bfs(simSnake[0], simSnake);
-    return reach>=0.8*empty;
-  }
-
-  aStar(start,end){
-    let open=[new Node(start.x,start.y)], closed=[];
-    while(open.length>0){
-      let current=open.reduce((a,b)=>a.f<b.f?a:b);
-      if(current.x===end.x && current.y===end.y){
-        let path=[],temp=current;
-        while(temp){ path.push({x:temp.x,y:temp.y}); temp=temp.parent; }
-        return path.reverse().slice(1);
-      }
-      open=open.filter(n=>n!==current);
-      closed.push(current);
-      for(let neighbor of current.getNeighbors()){
-        if(closed.some(n=>n.x===neighbor.x&&n.y===neighbor.y)) continue;
-        let g=current.g+1;
-        if(!open.some(n=>n.x===neighbor.x&&n.y===neighbor.y) || g<neighbor.g){
-          neighbor.g=g;
-          neighbor.h=this.heuristic(neighbor,end);
-          neighbor.f=neighbor.g+neighbor.h;
-          neighbor.parent=current;
-          if(!open.includes(neighbor)) open.push(neighbor);
-        }
-      }
-    }
-    return [];
-  }
-
-  reversedAStar(start,end){
-    let open=[new Node(start.x,start.y)], closed=[];
-    while(open.length>0){
-      let current=open.reduce((a,b)=>a.f>b.f?a:b);
-      if(current.x===end.x && current.y===end.y){
-        let path=[],temp=current;
-        while(temp){ path.push({x:temp.x,y:temp.y}); temp=temp.parent; }
-        return path.reverse().slice(1);
-      }
-      open=open.filter(n=>n!==current);
-      closed.push(current);
-      for(let neighbor of current.getNeighbors()){
-        if(closed.some(n=>n.x===neighbor.x&&n.y===neighbor.y)) continue;
-        let g=current.g+1;
-        if(!open.some(n=>n.x===neighbor.x&&n.y===neighbor.y) || g>neighbor.g){
-          neighbor.g=g;
-          neighbor.h=this.heuristic(neighbor,end);
-          neighbor.f=neighbor.g+neighbor.h;
-          neighbor.parent=current;
-          if(!open.includes(neighbor)) open.push(neighbor);
-        }
-      }
-    }
-    return [];
-  }
+  return null;
 }
 
-// --- игра ---
-function update(){
-  if(path.length===0){
-    let threshold=TOTAL_CELLS/8;
-    if(snake.body.length<threshold){
-      path=search.aStar(snake.head(),{x:apple.x,y:apple.y});
-      if(path.length>0 && !search.safeCheck(path)) path=[];
-    }else{
-      path=search.reversedAStar(snake.head(),{x:apple.x,y:apple.y});
-      if(path.length>0 && !search.safeCheck(path)) path=[];
+// Reversed A* (ищет длинный путь)
+function reversedAStar(maze, start, end) {
+  let open = [];
+  let closed = [];
+  open.push({pos:start, g:0, f:-heuristic(start,end), parent:null});
+  let best = null;
+
+  while (open.length > 0) {
+    let current = open.reduce((a,b) => a.f > b.f ? a : b);
+    if (current.pos.equals(end)) {
+      best = current;
+      break;
     }
-    if(path.length===0){
-      // survival mode
-      survival=true;
-      let free=neighbors(snake.head());
-      if(free.length>0) path=[free[0]];
-    }else survival=false;
+    open = open.filter(n => n !== current);
+    closed.push(current);
+
+    for (let n of neighbors(current.pos)) {
+      if (maze[n.y][n.x] === 1 && !(n.equals(end))) continue;
+      if (closed.find(c => c.pos.equals(n))) continue;
+      let g = current.g + 1;
+      let existing = open.find(o => o.pos.equals(n));
+      if (!existing) {
+        open.push({pos:n, g:g, f:g-heuristic(n,end), parent:current});
+      } else if (g > existing.g) { // отличие: ищем длиннее
+        existing.g = g;
+        existing.f = g - heuristic(n,end);
+        existing.parent = current;
+      }
+    }
   }
 
-  if(path.length>0){
-    let next=path.shift();
-    if(snake.body.some(s=>s.x===next.x && s.y===next.y)){
-      gameOver=true; return;
-    }
-    let eat=(next.x===apple.x&&next.y===apple.y);
-    snake.move(next,eat);
-    if(eat){ apple.spawn(); path=[]; }
+  if (!best) return null;
+  let path = [];
+  while (best) {
+    path.unshift(best.pos);
+    best = best.parent;
   }
+  return path;
 }
 
-function neighbors(node){
-  const deltas=[[1,0],[-1,0],[0,1],[0,-1]];
-  return deltas.map(([dx,dy])=>({x:node.x+dx,y:node.y+dy}))
-               .filter(n=>n.x>=0&&n.x<COLS&&n.y>=0&&n.y<ROWS)
-               .filter(n=>!snake.body.some(s=>s.x===n.x&&s.y===n.y));
+function heuristic(a,b) {
+  return abs(a.x-b.x) + abs(a.y-b.y);
+}
+
+function neighbors(pos) {
+  let dirs = [createVector(1,0), createVector(-1,0), createVector(0,1), createVector(0,-1)];
+  let result = [];
+  for (let d of dirs) {
+    let nx = pos.x + d.x, ny = pos.y + d.y;
+    if (nx>=0 && ny>=0 && nx<cols && ny<rows) {
+      result.push(createVector(nx,ny));
+    }
+  }
+  return result;
 }
 </script>
 </body>
