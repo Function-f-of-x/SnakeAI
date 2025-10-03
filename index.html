@@ -72,6 +72,7 @@ function aStar(start, goal){
             let path = [];
             let c = current;
             while(c){
+                console.log(c);
                 path.push(c);
                 c = cameFrom[c.x+","+c.y];
             }
