@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Snake AI Safe Paths</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.3.1/lib/p5.js"></script>
+<style>
+  body {
+    margin: 0;
+    background: #000000;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+    color: white;
+  }
+  #game-container {
+    margin-bottom: 20px;
+    position: relative;
+  }
+  #ui-container {
+    background: #151515;
+    padding: 15px;
+    border-radius: 8px;
+    min-width: 300px;
+    text-align: center;
+    position: relative;
+  }
+  .ui-item {
+    margin: 8px 0;
+    font-size: 16px;
+  }
+  .mode-hunting { color: #3ac322; }
+  .mode-survival { color: #b20c18; }
+  .mode-dead { color: #808080; }
+  .mode-win { color: #EFD50E; }
+  .speed-control {
+    margin: 15px 0;
+    width: 100%;
+  }
+  .speed-control label {
+    display: block;
+    margin-bottom: 8px;
+  }
+  .speed-control input {
+    width: 100%;
+    margin: 5px 0;
+  }
+  .speed-value {
+    font-size: 14px;
+    color: #aaa;
+  }
+  canvas {
+    display: block;
+    max-width: 100vw;
+    max-height: 70vh;
+  }
+  #win-message {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 48px;
+    font-weight: bold;
+    color: #EFD50E;
+    text-shadow: 3px 3px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+    z-index: 100;
+    display: none;
+  }
+  #progress-warning {
+    color: #ff6b6b;
+    font-size: 14px;
+    margin-top: 5px;
+  }
+</style>
+</head>
+<body>
+  <div id="game-container">
+    <div id="win-message">WIN!!!!</div>
+  </div>
+  <div id="ui-container">
+    <div class="ui-item">Length: <span id="length">3</span></div>
+    <div class="ui-item">Mode: <span id="mode" class="mode-hunting">Hunting Mode</span></div>
+    <div class="ui-item">Algorithm: <span id="algorithm">None</span></div>
+    <div class="ui-item">Path: <span id="path-status">No path</span></div>
+    <div class="ui-item">Free cells: <span id="free-cells">797 / 800</span></div>
+    <div class="ui-item">Steps without progress: <span id="progress-steps">0</span>/50000</div>
+    <div id="progress-warning"></div>
+    
+    <div class="speed-control">
+      <label for="speed-slider">Frame Rate:</label>
+      <input type="range" id="speed-slider" min="0" max="7" value="4" step="1">
+      <div class="speed-value">FPS: <span id="fps-value">60</span></div>
+    </div>
+    
+    <div class="speed-control">
+      <label for="game-speed-slider">Game Speed (steps/frame):</label>
+      <input type="range" id="game-speed-slider" min="1" max="50" value="1" step="1">
+      <div class="speed-value">Steps per frame: <span id="game-speed-value">1</span></div>
+    </div>
+  </div>
+
+<script>
+// Глобальные параметры поля
+const COLS = 40;
+const ROWS = 20;
+
+// Доступные значения FPS
+const FPS_VALUES = [0, 1, 15, 30, 60, 120, 240, 360];
+
+// Переменная для контроля скорости игры (количество шагов за кадр)
+let gameSpeed = 1;
+
+// Переменные для отслеживания прогресса
+let stepsWithoutProgress = 0;
+const MAX_STEPS_WITHOUT_PROGRESS = 50000;
+let lastSnakeLength = 3;
+let hasWon = false;
+
+// ======= Apple class =======
+class Apple {
+    constructor() {
+        this.boxes = [];
+        for (let i = 0; i < COLS; i++) {
+            for (let j = 0; j < ROWS; j++) {
+                this.boxes.push(createVector(i, j));
+            }
+        }
+        this.generate([createVector(0,0), createVector(1,0), createVector(2,0)]);
+    }
+    generate(snake_body) {
+        const empty_boxes = this.boxes.filter(v=>{
+            for (let s of snake_body) if (v.x===s.x && v.y===s.y) return false;
+            return true;
+        });
+        if (empty_boxes.length===0) return false;
+        let pos = empty_boxes[int(random(0, empty_boxes.length))];
+        this.x = pos.x; this.y = pos.y;
+        return true;
+    }
+    show(cellSize) {
+        fill('#ee0a17'); noStroke();
+        rect(this.x * cellSize, this.y * cellSize, cellSize, cellSize);
+    }
+}
+
+// ======= Snake class =======
+class Snake {
+    constructor() {
+        this.body = [];
+        for (let i=0;i<3;i++) this.body[i]=createVector(i,0);
+        this.x_dir=1; this.y_dir=0;
+        this.path = [];
+        this.survivalMode = false;
+        this.isDead = false;
+    }
+    getHead() { return this.body[this.body.length-1]; }
+    getTail() { return this.body[0]; }
+    changeDirection(x,y){ if (!(abs(this.x_dir-x)==2||abs(this.y_dir-y)==2)){this.x_dir=x;this.y_dir=y;} }
+    up(){this.changeDirection(0,-1);}
+    down(){this.changeDirection(0,1);}
+    left(){this.changeDirection(-1,0);}
+    right(){this.changeDirection(1,0);}
+    show(cellSize){
+        if (hasWon) {
+            fill('#EFD50E'); // Золотой цвет при победе
+        } else if (this.isDead) {
+            fill('#808080'); // Серый цвет при смерти
+        } else {
+            fill(this.survivalMode ? '#b20c18' : '#3ac322');
+        }
+        noStroke();
+        
+        // Рисуем все сегменты змейки
+        for (let s of this.body) {
+            rect(s.x * cellSize, s.y * cellSize, cellSize, cellSize);
+        }
+        
+        // Добавляем промежутки между несоседними клетками
+        stroke('#151515'); // Цвет фона для создания промежутков
+        strokeWeight(2);
+        
+        for (let i = 0; i < this.body.length; i++) {
+            let backToggle = -1;
+            let frontToggle = 1;
+            
+            if (i == 0) {
+                backToggle = 1;
+            } else {
+                backToggle = -1;
+            }
+            if (i == this.body.length - 1) {
+                frontToggle = -1;
+            } else {
+                frontToggle = 1;
+            }
+            
+            // Верхняя граница
+            if (!(this.body[i].x == this.body[i + backToggle].x && this.body[i].y - this.body[i + backToggle].y == 1)) {
+                if (!(this.body[i].x == this.body[i + frontToggle].x && this.body[i].y - this.body[i + frontToggle].y == 1)) {
+                    line(this.body[i].x * cellSize, this.body[i].y * cellSize, 
+                         this.body[i].x * cellSize + cellSize, this.body[i].y * cellSize);
+                }
+            }
+            
+            // Нижняя граница
+            if (!(this.body[i].x == this.body[i + backToggle].x && this.body[i].y - this.body[i + backToggle].y == -1)) {
+                if (!(this.body[i].x == this.body[i + frontToggle].x && this.body[i].y - this.body[i + frontToggle].y == -1)) {
+                    line(this.body[i].x * cellSize, this.body[i].y * cellSize + cellSize, 
+                         this.body[i].x * cellSize + cellSize, this.body[i].y * cellSize + cellSize);
+                }
+            }
+            
+            // Правая граница
+            if (!(this.body[i].y == this.body[i + backToggle].y && this.body[i].x - this.body[i + backToggle].x == -1)) {
+                if (!(this.body[i].y == this.body[i + frontToggle].y && this.body[i].x - this.body[i + frontToggle].x == -1)) {
+                    line(this.body[i].x * cellSize + cellSize, this.body[i].y * cellSize, 
+                         this.body[i].x * cellSize + cellSize, this.body[i].y * cellSize + cellSize);
+                }
+            }
+            
+            // Левая граница
+            if (!(this.body[i].y == this.body[i + backToggle].y && this.body[i].x - this.body[i + backToggle].x == 1)) {
+                if (!(this.body[i].y == this.body[i + frontToggle].y && this.body[i].x - this.body[i + frontToggle].x == 1)) {
+                    line(this.body[i].x * cellSize, this.body[i].y * cellSize, 
+                         this.body[i].x * cellSize, this.body[i].y * cellSize + cellSize);
+                }
+            }
+        }
+        
+        noStroke(); // Сбрасываем обводку для остальной отрисовки
+    }
+    
+    // Проверка столкновений
+    checkCollision() {
+        const head = this.getHead();
+        
+        // Столкновение со стеной
+        if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
+            return true;
+        }
+        
+        // Столкновение с собой (проверяем все сегменты кроме головы)
+        for (let i = 0; i < this.body.length - 1; i++) {
+            if (head.x === this.body[i].x && head.y === this.body[i].y) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+}
+
+// ======= Node class =======
+class Node{
+    constructor(x,y){this.x=x;this.y=y;this.parent=null;this.f=0;this.g=0;this.h=0;}
+    equals(other){return this.x===other.x && this.y===other.y;}
+}
+
+// ======= Search class =======
+class Search {
+    constructor(snake, apple){this.snake=snake;this.apple=apple; this.lastUsedMethod = "None";}
+    
+    refreshMaze(){
+        let maze=[]; for(let j=0;j<ROWS;j++){ let row=[]; for(let i=0;i<COLS;i++) row.push(0); maze.push(row);}
+        for(let s of this.snake.body) maze[s.y][s.x]=-1;
+        let head=this.snake.getHead(), tail=this.snake.getTail();
+        maze[head.y][head.x]=1; maze[tail.y][tail.x]=2;
+        return maze;
+    }
+
+    getPath(){
+        if (this.snake.isDead || hasWon) return;
+        
+        let maze=this.refreshMaze();
+        let start,end;
+        for(let j=0;j<ROWS;j++) for(let i=0;i<COLS;i++){
+            if(maze[j][i]==1) start={x:i,y:j};
+            else if(maze[j][i]==2) end={x:i,y:j};
+        }
+        const threshold=Math.floor(COLS*ROWS/8);
+        if(this.snake.body.length <= threshold){
+            this.snake.path=this.AStar(maze,start,this.apple);
+            this.lastUsedMethod = "A*";
+        } else {
+            this.snake.path=this.reversedAStar(maze,start,end);
+            this.lastUsedMethod = "Reversed A*";
+        }
+    }
+
+    neighbors(node,maze){
+        const deltas=[{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+        return deltas.map(d=>({x:node.x+d.x,y:node.y+d.y}))
+                     .filter(n=>n.x>=0&&n.x<COLS&&n.y>=0&&n.y<ROWS)
+                     .filter(n=>maze[n.y][n.x]!=-1);
+    }
+
+    reachableCells(start, occupied){
+        const queue=[start]; const visited=new Set([`${start.x},${start.y}`]); let count=1;
+        while(queue.length>0){
+            let cur=queue.shift();
+            const deltas=[{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}];
+            for(let d of deltas){
+                let nx=cur.x+d.x, ny=cur.y+d.y;
+                if(nx<0||nx>=COLS||ny<0||ny>=ROWS) continue;
+                if(occupied.some(s=>s.x===nx&&s.y===ny)) continue;
+                const key=`${nx},${ny}`; if(!visited.has(key)){visited.add(key);queue.push({x:nx,y:ny});count++;}
+            }
+        }
+        return count;
+    }
+
+    heuristic(a,b){return abs(a.x-b.x)+abs(a.y-b.y);}
+
+    isPathSafe(path) {
+        if (path.length === 0) return false;
+        
+        const futureSnake = [...this.snake.body];
+        for (let step of path) {
+            futureSnake.push(createVector(step.x, step.y));
+            if (step.x === this.apple.x && step.y === this.apple.y) {
+                // Если съедаем яблоко, хвост не удаляется
+            } else {
+                futureSnake.shift();
+            }
+        }
+        
+        const emptyCells = COLS * ROWS - futureSnake.length;
+        if (emptyCells <= 0) return false;
+        
+        const reachable = this.reachableCells(futureSnake[futureSnake.length - 1], futureSnake);
+        return reachable >= Math.floor(0.8 * emptyCells);
+    }
+
+    AStar(maze, start, goal) {
+        let start_node = new Node(start.x, start.y);
+        let end_node = new Node(goal.x, goal.y);
+        
+        // Мини-куча для открытого списка
+        let open_list = new MinHeap();
+        let closed_set = new Set();
+        
+        open_list.push(start_node);
+        let possible_paths = [];
+        const adjacent_squares = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+        let max_paths_to_check = 5; // Ограничим количество проверяемых путей для производительности
+
+        while (!open_list.isEmpty() && possible_paths.length < max_paths_to_check) {
+            let current_node = open_list.pop();
+            
+            // Пропускаем если уже в закрытом списке
+            let node_key = `${current_node.x},${current_node.y}`;
+            if (closed_set.has(node_key)) continue;
+            closed_set.add(node_key);
+
+            if (current_node.equals(end_node)) {
+                let path = [];
+                let current = current_node;
+                while (current != null) {
+                    path.push({x: current.x, y: current.y});
+                    current = current.parent;
+                }
+                path.reverse();
+                
+                // Проверяем безопасность пути
+                if (this.isPathSafe(path.slice(1))) {
+                    possible_paths.push(path);
+                    // Если нашли безопасный путь, не обязательно искать дальше
+                    break;
+                }
+                // Если путь небезопасен, продолжаем искать другие пути
+                continue;
+            }
+
+            let children = [];
+            for (let i = 0; i < adjacent_squares.length; i++) {
+                let nx = current_node.x + adjacent_squares[i][0];
+                let ny = current_node.y + adjacent_squares[i][1];
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    if (maze[ny][nx] !== -1) {
+                        let new_node = new Node(nx, ny);
+                        children.push(new_node);
+                    }
+                }
+            }
+
+            for (let child of children) {
+                let child_key = `${child.x},${child.y}`;
+                if (closed_set.has(child_key)) continue;
+
+                child.g = current_node.g + 1;
+                child.h = this.heuristic(child, end_node);
+                child.f = child.g + child.h;
+                child.parent = current_node;
+
+                // Проверяем, есть ли уже такая же нода в открытом списке с лучшей стоимостью
+                let existing_node = open_list.find(child);
+                if (existing_node && existing_node.g <= child.g) {
+                    continue;
+                }
+                
+                open_list.push(child);
+            }
+        }
+
+        if (possible_paths.length === 0) return [];
+        return possible_paths[0].slice(1); // Возвращаем первый найденный безопасный путь
+    }
+
+    reversedAStar(maze, start, end) {
+        let start_node = new Node(start.x, start.y);
+        let end_node = new Node(end.x, end.y);
+        let open_list = [];
+        let closed_list = [];
+        open_list.push(start_node);
+        let possible_paths = [];
+        const adjacent_squares = [
+            [0, -1],
+            [0, 1],
+            [-1, 0],
+            [1, 0],
+        ];
+
+        while (open_list.length > 0) {
+
+            let current_node = open_list[0];
+            let current_index = 0;
+            let index = 0;
+
+            for (let i = 0; i < open_list.length; i++) {
+                if (open_list[i].f > current_node.f) {
+                    current_node = open_list[i];
+                    current_index = index;
+                }
+                index++;
+            }
+
+            open_list.splice(current_index, 1);
+            closed_list.push(current_node);
+            if (current_node.equals(end_node)) {
+                let path = [];
+                let current = current_node;
+                while (current != null) {
+                    path.push(current);
+                    current = current.parent;
+                }
+                let reversed_path = path.reverse();
+                let path_coords = reversed_path.map(node => ({x: node.x, y: node.y}));
+                
+                // УДАЛЕНА ПРОВЕРКА БЕЗОПАСНОСТИ ДЛЯ REVERSED A*
+                possible_paths.push(path_coords);
+            }
+
+            let children = [];
+            for (let i = 0; i < adjacent_squares.length; i++) {
+                let node_position = [current_node.x + adjacent_squares[i][0], current_node.y + adjacent_squares[i][1]];
+                if (node_position[0] <= 39 && node_position[0] >= 0) {
+                    if (node_position[1] <= 19 && node_position[1] >= 0) {
+                        if (maze[node_position[1]][node_position[0]] != -1) {
+                            let new_node = new Node(node_position[0], node_position[1]);
+                            children.push(new_node);
+                        }
+                    }
+                }
+            }
+
+            for (let i = 0; i < children.length; i++) {
+                let if_in_closed_list = false;
+                for (let j = 0; j < closed_list.length; j++) {
+                    if (children[i].equals(closed_list[j])) {
+                        if_in_closed_list = true;
+                    }
+                }
+                if (!if_in_closed_list) {
+                    children[i].g = current_node.g + 2;
+                    children[i].h = abs(children[i].x - end_node.x) + abs(children[i].y - end_node.y);
+                    children[i].f = children[i].g + children[i].h;
+                    let present = false;
+                    for (let j = 0; j < open_list.length; j++) {
+                        if (children[i].equals(open_list[j]) && children[i].g < open_list[j].g) {
+                            present = true;
+                        } else if (children[i].equals(open_list[j]) && children[i].g >= open_list[j].g) {
+                            open_list[j] = children[i];
+                            open_list[j].parent = current_node;
+                        }
+                    }
+                    if (!present) {
+                        children[i].parent = current_node;
+                        open_list.push(children[i]);
+                    }
+                }
+            }
+        }
+        let path = [];
+        for (let i = 0; i < possible_paths.length; i++) {
+            if (possible_paths[i].length > path.length) {
+                path = possible_paths[i];
+            }
+        }
+        return path.slice(1); // Убираем первый элемент (текущую позицию головы)
+    }
+}
+
+// ======= MinHeap для A* =======
+class MinHeap {
+    constructor() {
+        this.heap = [];
+    }
+
+    push(node) {
+        this.heap.push(node);
+        this.bubbleUp(this.heap.length - 1);
+    }
+
+    bubbleUp(idx) {
+        while (idx > 0) {
+            let parentIdx = Math.floor((idx - 1) / 2);
+            if (this.heap[parentIdx].f <= this.heap[idx].f) break;
+            [this.heap[parentIdx], this.heap[idx]] = [this.heap[idx], this.heap[parentIdx]];
+            idx = parentIdx;
+        }
+    }
+
+    pop() {
+        if (this.heap.length === 0) return null;
+        let min = this.heap[0];
+        let end = this.heap.pop();
+        if (this.heap.length > 0) {
+            this.heap[0] = end;
+            this.sinkDown(0);
+        }
+        return min;
+    }
+
+    sinkDown(idx) {
+        let length = this.heap.length;
+        while (true) {
+            let left = 2 * idx + 1;
+            let right = 2 * idx + 2;
+            let smallest = idx;
+            if (left < length && this.heap[left].f < this.heap[smallest].f) smallest = left;
+            if (right < length && this.heap[right].f < this.heap[smallest].f) smallest = right;
+            if (smallest === idx) break;
+            [this.heap[idx], this.heap[smallest]] = [this.heap[smallest], this.heap[idx]];
+            idx = smallest;
+        }
+    }
+
+    isEmpty() {
+        return this.heap.length === 0;
+    }
+
+    find(node) {
+        return this.heap.find(n => n.x === node.x && n.y === node.y);
+    }
+}
+
+// ======= MaxHeap для Reversed A* =======
+class MaxHeap {
+    constructor() {
+        this.heap = [];
+    }
+
+    push(node) {
+        this.heap.push(node);
+        this.bubbleUp(this.heap.length - 1);
+    }
+
+    bubbleUp(idx) {
+        while (idx > 0) {
+            let parentIdx = Math.floor((idx - 1) / 2);
+            if (this.heap[parentIdx].f >= this.heap[idx].f) break;
+            [this.heap[parentIdx], this.heap[idx]] = [this.heap[idx], this.heap[parentIdx]];
+            idx = parentIdx;
+        }
+    }
+
+    pop() {
+        if (this.heap.length === 0) return null;
+        let max = this.heap[0];
+        let end = this.heap.pop();
+        if (this.heap.length > 0) {
+            this.heap[0] = end;
+            this.sinkDown(0);
+        }
+        return max;
+    }
+
+    sinkDown(idx) {
+        let length = this.heap.length;
+        while (true) {
+            let left = 2 * idx + 1;
+            let right = 2 * idx + 2;
+            let largest = idx;
+            if (left < length && this.heap[left].f > this.heap[largest].f) largest = left;
+            if (right < length && this.heap[right].f > this.heap[largest].f) largest = right;
+            if (largest === idx) break;
+            [this.heap[idx], this.heap[largest]] = [this.heap[largest], this.heap[idx]];
+            idx = largest;
+        }
+    }
+
+    isEmpty() {
+        return this.heap.length === 0;
+    }
+
+    find(node) {
+        return this.heap.find(n => n.x === node.x && n.y === node.y);
+    }
+}
+
+// ======= Глобальные переменные =======
+let snake, apple, search;
+let cellSize;
+
+// ======= p5.js setup =======
+function setup() {
+    calculateCellSize();
+    const canvasWidth = COLS * cellSize;
+    const canvasHeight = ROWS * cellSize;
+    const canvas = createCanvas(canvasWidth, canvasHeight);
+    canvas.parent('game-container');
+    snake = new Snake();
+    apple = new Apple();
+    search = new Search(snake, apple);
+    
+    // Установка начальной скорости (60 FPS)
+    frameRate(60);
+    
+    // Настройка слайдера FPS
+    const speedSlider = document.getElementById('speed-slider');
+    const fpsValue = document.getElementById('fps-value');
+    
+    // Обработчик изменения FPS
+    speedSlider.addEventListener('input', function() {
+        const fps = FPS_VALUES[this.value];
+        frameRate(fps);
+        fpsValue.textContent = fps;
+    });
+    
+    // Настройка слайдера скорости игры
+    const gameSpeedSlider = document.getElementById('game-speed-slider');
+    const gameSpeedValue = document.getElementById('game-speed-value');
+    
+    // Обработчик изменения скорости игры
+    gameSpeedSlider.addEventListener('input', function() {
+        gameSpeed = parseInt(this.value);
+        gameSpeedValue.textContent = gameSpeed;
+    });
+    
+    // Инициализация значений
+    fpsValue.textContent = FPS_VALUES[speedSlider.value];
+    gameSpeedValue.textContent = gameSpeedSlider.value;
+}
+
+function calculateCellSize() {
+    const maxWidth = windowWidth * 0.95;
+    const maxHeight = windowHeight * 0.95;
+    const scaleX = maxWidth / COLS;
+    const scaleY = maxHeight / ROWS;
+    cellSize = Math.floor(Math.min(scaleX, scaleY));
+    if (cellSize < 1) cellSize = 1;
+}
+
+function draw() {
+    background('#151515');
+    apple.show(cellSize);
+    snake.show(cellSize);
+    
+    // Проверка победы
+    const freeCells = COLS * ROWS - snake.body.length;
+    if (freeCells === 0 && !hasWon) {
+        hasWon = true;
+        document.getElementById('win-message').style.display = 'block';
+    }
+    
+    // Если змея жива и игра не выиграна, обновляем её состояние
+    if (!snake.isDead && !hasWon) {
+        // Выполняем несколько шагов за кадр в зависимости от gameSpeed
+        for (let i = 0; i < gameSpeed; i++) {
+            if (snake.isDead || hasWon) break;
+            updateSnake();
+        }
+    }
+    
+    updateUI();
+}
+
+// ======= Исправленная логика движения =======
+function updateSnake() {
+    // Отслеживание прогресса
+    if (snake.body.length > lastSnakeLength) {
+        stepsWithoutProgress = 0;
+        lastSnakeLength = snake.body.length;
+    } else {
+        stepsWithoutProgress++;
+    }
+    
+    // Проверка на отсутствие прогресса
+    if (stepsWithoutProgress >= MAX_STEPS_WITHOUT_PROGRESS) {
+        snake.isDead = true;
+        return;
+    }
+
+    let nextPos = null;
+
+    if (snake.path.length > 0) {
+        let next = snake.path.shift();
+        nextPos = { x: next.x, y: next.y };
+    } else {
+        search.getPath();
+        if (snake.path.length > 0) {
+            return;
+        }
+
+        // Если нет пути, идём за хвостом (survival mode)
+        snake.survivalMode = true;
+        const directions = [
+            { dx: snake.x_dir, dy: snake.y_dir },
+            { dx: -snake.y_dir, dy: snake.x_dir },
+            { dx: snake.y_dir, dy: -snake.x_dir },
+            { dx: -snake.x_dir, dy: -snake.y_dir }
+        ];
+
+        for (let dir of directions) {
+            if (Math.abs(snake.x_dir - dir.dx) === 2 || Math.abs(snake.y_dir - dir.dy) === 2) continue;
+            let head = snake.getHead();
+            let cand = { x: head.x + dir.dx, y: head.y + dir.dy };
+            if (cand.x < 0 || cand.x >= COLS || cand.y < 0 || cand.y >= ROWS) continue;
+            if (snake.body.some(s => s.x === cand.x && s.y === cand.y)) continue;
+
+            // Проверяем безопасность хода
+            let future = [...snake.body, cand];
+            let empty = COLS * ROWS - future.length;
+            if (empty > 0 && search.reachableCells(cand, future) >= Math.floor(0.8 * empty)) {
+                nextPos = cand;
+                break;
+            }
+        }
+
+        // Если нет безопасного хода, ищем ЛЮБОЙ возможный ход (чтобы избежать смерти)
+        if (!nextPos) {
+            for (let dir of directions) {
+                if (Math.abs(snake.x_dir - dir.dx) === 2 || Math.abs(snake.y_dir - dir.dy) === 2) continue;
+                let head = snake.getHead();
+                let cand = { x: head.x + dir.dx, y: head.y + dir.dy };
+                if (cand.x < 0 || cand.x >= COLS || cand.y < 0 || cand.y >= ROWS) continue;
+                if (snake.body.some(s => s.x === cand.x && s.y === cand.y)) continue;
+                
+                nextPos = cand;
+                break;
+            }
+        }
+    }
+
+    if (!nextPos) {
+        // Если совсем нет ходов, пропускаем ход
+        return;
+    }
+
+    // Проверяем столкновение перед движением
+    if (snake.checkCollision()) {
+        snake.isDead = true;
+        return;
+    }
+
+    let ateApple = (nextPos.x === apple.x && nextPos.y === apple.y);
+    snake.body.push(createVector(nextPos.x, nextPos.y));
+    if (!ateApple) {
+        snake.body.shift();
+    }
+
+    // Проверяем столкновение после движения
+    if (snake.checkCollision()) {
+        snake.isDead = true;
+        return;
+    }
+
+    if (snake.body.length >= 2) {
+        let head = snake.getHead();
+        let prev = snake.body[snake.body.length - 2];
+        snake.x_dir = head.x - prev.x;
+        snake.y_dir = head.y - prev.y;
+    }
+
+    if (ateApple) {
+        if (!apple.generate(snake.body)) {
+            // Если не удалось сгенерировать яблоко (победа)
+            return;
+        }
+        snake.survivalMode = false;
+        search.getPath();
+    } else if (snake.survivalMode) {
+        let tempPath = search.AStar(search.refreshMaze(), snake.getHead(), apple);
+        if (tempPath.length > 0) {
+            snake.survivalMode = false;
+            snake.path = tempPath;
+        }
+    }
+}
+
+// ======= Обновление интерфейса =======
+function updateUI() {
+    document.getElementById('length').textContent = snake.body.length;
+    
+    const modeElement = document.getElementById('mode');
+    if (hasWon) {
+        modeElement.textContent = 'WIN!';
+        modeElement.className = 'mode-win';
+    } else if (snake.isDead) {
+        modeElement.textContent = 'Dead';
+        modeElement.className = 'mode-dead';
+    } else if (snake.survivalMode) {
+        modeElement.textContent = 'Survival Mode';
+        modeElement.className = 'mode-survival';
+    } else {
+        modeElement.textContent = 'Hunting Mode';
+        modeElement.className = 'mode-hunting';
+    }
+    
+    document.getElementById('algorithm').textContent = (snake.isDead || hasWon) ? "None" : search.lastUsedMethod;
+    
+    const pathStatus = (snake.isDead || hasWon) ? "No path" : (snake.path.length > 0 ? `Path steps: ${snake.path.length}` : "No path");
+    document.getElementById('path-status').textContent = pathStatus;
+    
+    const freeCells = COLS * ROWS - snake.body.length;
+    document.getElementById('free-cells').textContent = `${freeCells} / ${COLS * ROWS}`;
+    
+    // Отображение прогресса
+    document.getElementById('progress-steps').textContent = stepsWithoutProgress;
+    
+    // Предупреждение о прогрессе
+    const progressWarning = document.getElementById('progress-warning');
+    if (stepsWithoutProgress > MAX_STEPS_WITHOUT_PROGRESS * 0.8) {
+        progressWarning.textContent = 'WARNING: Slow progress!';
+    } else if (stepsWithoutProgress > MAX_STEPS_WITHOUT_PROGRESS * 0.5) {
+        progressWarning.textContent = 'Progress is slowing down...';
+    } else {
+        progressWarning.textContent = '';
+    }
+}
+
+// ======= Адаптация при изменении размера окна =======
+function windowResized() {
+    calculateCellSize();
+    resizeCanvas(COLS * cellSize, ROWS * cellSize);
+}
+</script>
+</body>
+</html>
