@@ -93,8 +93,8 @@
     
     <div class="speed-control">
       <label for="speed-slider">Frame Rate:</label>
-      <input type="range" id="speed-slider" min="0" max="7" value="4" step="1">
-      <div class="speed-value">FPS: <span id="fps-value">60</span></div>
+      <input type="range" id="speed-slider" min="0" max="5" value="4" step="1">
+      <div class="speed-value">FPS: <span id="fps-value">15</span></div>
     </div>
     
     <div class="speed-control">
@@ -110,7 +110,7 @@ const COLS = 40;
 const ROWS = 20;
 
 // Доступные значения FPS
-const FPS_VALUES = [0, 1, 15, 30, 60, 120, 240, 360];
+const FPS_VALUES = [0, 1, 15, 30, 60];
 
 // Переменная для контроля скорости игры (количество шагов за кадр)
 let gameSpeed = 1;
@@ -629,7 +629,7 @@ function setup() {
     search = new Search(snake, apple);
     
     // Установка начальной скорости (60 FPS)
-    frameRate(60);
+    frameRate(15);
     
     // Настройка слайдера FPS
     const speedSlider = document.getElementById('speed-slider');
