@@ -835,7 +835,9 @@ function updateUI() {
     
     // Предупреждение о прогрессе
     const progressWarning = document.getElementById('progress-warning');
-    if (stepsWithoutProgress > MAX_STEPS_WITHOUT_PROGRESS * 0.8) {
+    if (stepsWithoutProgress >= MAX_STEPS_WITHOUT_PROGRESS) {
+        progressWarning.textContent = 'Game is lost due to a slow progress';
+    } else if (stepsWithoutProgress > MAX_STEPS_WITHOUT_PROGRESS * 0.8) {
         progressWarning.textContent = 'WARNING: Slow progress!';
     } else if (stepsWithoutProgress > MAX_STEPS_WITHOUT_PROGRESS * 0.5) {
         progressWarning.textContent = 'Progress is slowing down...';
