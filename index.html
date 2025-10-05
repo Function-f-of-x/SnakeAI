@@ -19,62 +19,63 @@
     color: white;
   }
   #game-container {
-    margin-bottom: 20px;
+    margin-bottom: 10px;
     position: relative;
   }
   #ui-container {
     background: #151515;
-    padding: 15px;
-    border-radius: 8px;
-    min-width: 300px;
+    padding: 10px;
+    border-radius: 6px;
+    min-width: 250px;
     text-align: center;
     position: relative;
   }
   .ui-item {
-    margin: 8px 0;
-    font-size: 16px;
+    margin: 5px 0;
+    font-size: 12px;
   }
   .mode-hunting { color: #3ac322; }
   .mode-survival { color: #b20c18; }
   .mode-dead { color: #808080; }
   .mode-win { color: #EFD50E; }
   .speed-control {
-    margin: 15px 0;
+    margin: 10px 0;
     width: 100%;
   }
   .speed-control label {
     display: block;
-    margin-bottom: 8px;
+    margin-bottom: 5px;
+    font-size: 11px;
   }
   .speed-control input {
     width: 100%;
-    margin: 5px 0;
+    margin: 3px 0;
   }
   .speed-value {
-    font-size: 14px;
+    font-size: 10px;
     color: #aaa;
   }
   canvas {
     display: block;
-    max-width: 100vw;
-    max-height: 70vh;
+    max-width: 90vw;
+    max-height: 60vh;
   }
   #win-message {
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    font-size: 48px;
+    font-size: 36px;
     font-weight: bold;
     color: #EFD50E;
-    text-shadow: 3px 3px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+    text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
     z-index: 100;
     display: none;
   }
   #progress-warning {
     color: #ff6b6b;
-    font-size: 14px;
-    margin-top: 5px;
+    font-size: 10px;
+    margin-top: 3px;
   }
 </style>
 </head>
@@ -182,7 +183,7 @@ class Snake {
         
         // Добавляем промежутки между несоседними клетками
         stroke('#151515'); // Цвет фона для создания промежутков
-        strokeWeight(2);
+        strokeWeight(1);
         
         for (let i = 0; i < this.body.length; i++) {
             let backToggle = -1;
@@ -628,7 +629,7 @@ function setup() {
     apple = new Apple();
     search = new Search(snake, apple);
     
-    // Установка начальной скорости (60 FPS)
+    // Установка начальной скорости (15 FPS)
     frameRate(15);
     
     // Настройка слайдера FPS
@@ -658,8 +659,8 @@ function setup() {
 }
 
 function calculateCellSize() {
-    const maxWidth = windowWidth * 0.95;
-    const maxHeight = windowHeight * 0.95;
+    const maxWidth = windowWidth * 0.85; // Уменьшено с 0.95
+    const maxHeight = windowHeight * 0.60; // Уменьшено с 0.70
     const scaleX = maxWidth / COLS;
     const scaleY = maxHeight / ROWS;
     cellSize = Math.floor(Math.min(scaleX, scaleY));
