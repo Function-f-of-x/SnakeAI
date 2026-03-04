@@ -4,7 +4,7 @@ class Search {
         this.apple = apple;
         this.lastUsedMethod = "None";
         this.safetyCache = new Map();
-        this.directionHistory = new Map(); // 🔥 Для детекции зигзагов
+        this.MIN_PATH_COVERAGE = 0.8; // 🔥 Минимум 80% покрытия поля
     }
 
     refreshMaze() {
@@ -34,10 +34,12 @@ class Search {
 
         const totalCells = COLS * ROWS;
         const snakeLength = this.snake.body.length;
+        const minCoverage = Math.floor(totalCells * this.MIN_PATH_COVERAGE);
 
         // 🐛 DEBUG: Логирование выбора алгоритма
         if (DEBUG_MODE) {
             console.log(`\n🔍 getPath | Length: ${snakeLength} | Total: ${totalCells}`);
+            console.log(`   Min coverage (80%): ${minCoverage} cells`);
             console.log(`   Threshold 1/8: ${Math.floor(totalCells / 8)} | Threshold 7/8: ${Math.floor(totalCells * 7 / 8)}`);
         }
 
@@ -53,11 +55,11 @@ class Search {
             this.snake.path = this.pathToTail(maze, start, end);
             this.lastUsedMethod = "PathToTail";
         }
-        // 3️⃣ Средняя игра: reversedAStar (длиннейший путь к яблоку)
+        // 3️⃣ Средняя игра: Long Safe Path (80%!)
         else {
-            if (DEBUG_MODE) console.log('🟡 Using Reversed A*');
-            this.snake.path = this.reversedAStar(maze, start, this.apple);
-            this.lastUsedMethod = "Reversed A*";
+            if (DEBUG_MODE) console.log('🟡 Using Long Safe Path (80%)');
+            this.snake.path = this.findLongSafePath(maze, start, this.apple);
+            this.lastUsedMethod = "LongSafePath";
         }
 
         // 🐛 DEBUG: Логирование результата
@@ -75,54 +77,6 @@ class Search {
         if (DEBUG_PAUSE_GAME && DEBUG_SHOW_FINAL_STATE) {
             debugFreezeUntil = millis() + DEBUG_FREEZE_DURATION;
         }
-    }
-
-    // 🔥 Проверка: является ли путь зигзагом (частые повороты)
-    isZigzagPattern(currentNode, child) {
-        // Получаем направление от current к child
-        const newDir = {
-            x: child.x - currentNode.x,
-            y: child.y - currentNode.y
-        };
-
-        // Создаём ключ для отслеживания пути
-        const pathKey = `${currentNode.x},${currentNode.y}`;
-
-        // Получаем историю направлений
-        let history = this.directionHistory.get(pathKey) || [];
-
-        // Добавляем новое направление
-        history.push(newDir);
-
-        // Ограничиваем историю последними 6 шагами
-        if (history.length > 6) {
-            history.shift();
-        }
-
-        // Сохраняем обновлённую историю
-        this.directionHistory.set(pathKey, history);
-
-        // Если меньше 4 направлений — не можем детектировать зигзаг
-        if (history.length < 4) {
-            return 0;
-        }
-
-        // Подсчитываем количество смен направления
-        let directionChanges = 0;
-        for (let i = 1; i < history.length; i++) {
-            if (history[i].x !== history[i - 1].x || history[i].y !== history[i - 1].y) {
-                directionChanges++;
-            }
-        }
-
-        // 🔥 Если >75% шагов — это зигзаг (смена направления каждый шаг)
-        const changeRatio = directionChanges / (history.length - 1);
-
-        if (changeRatio > 0.75) {
-            return 5.0; // 🔥 Большой штраф за зигзаг
-        }
-
-        return 0;
     }
 
     // 🚫 Проверка: является ли ход назад (разворот на 180°)
@@ -338,7 +292,7 @@ class Search {
 
                 // 🔥 Штраф за удалённость от тела
                 const bodyNeighbors = this.countBodyNeighbors(child);
-                const isolationPenalty = (bodyNeighbors < 2) ? 2.0 : 0; // 🔥 Штраф если < 2 соседей
+                const isolationPenalty = (bodyNeighbors < 2) ? 4.0 : 0; // 🔥 Штраф если < 2 соседей
 
                 child.f = child.g + child.h + isolationPenalty;
                 child.parent = current_node;
@@ -361,113 +315,235 @@ class Search {
         return possible_paths[0].slice(1);
     }
 
-    reversedAStar(maze, start, goal) {
-        // Сброс отладочных переменных
+    // 🔥 Жадный поиск длинного безопасного пути
+    findLongSafePath(maze, start, goal) {
         debugOpenList = [];
         debugClosedSet = new Set();
         debugFinalPath = [];
         debugIsSearching = true;
-        this.directionHistory.clear();
 
-        let start_node = new Node(start.x, start.y);
-        let end_node = new Node(goal.x, goal.y);
+        const totalCells = COLS * ROWS;
+        const freeCells = totalCells - this.snake.body.length;
+        const minPathLength = Math.floor(freeCells * this.MIN_PATH_COVERAGE);
 
-        let open_list = new MinHeap();
-        let closed_set = new Set();
+        const path = [];
+        const visited = new Set([`${start.x},${start.y}`]);
+        let current = { x: start.x, y: start.y };
 
-        start_node.g = 0;
-        start_node.h = this.heuristic(start_node, end_node);
-        start_node.f = -(start_node.g + start_node.h);
-        start_node.parent = null;
+        // 🔥 Будущее положение змейки (начинаем с текущего)
+        let futureSnake = [...this.snake.body];
 
-        open_list.push(start_node);
-        let possible_paths = [];
-        const adjacent_squares = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+        const directions = [
+            { x: 0, y: -1, name: 'up' },
+            { x: 0, y: 1, name: 'down' },
+            { x: -1, y: 0, name: 'left' },
+            { x: 1, y: 0, name: 'right' }
+        ];
+
         let iterations = 0;
+        const maxIterations = Math.min(freeCells, 1000);
 
-        while (!open_list.isEmpty() && iterations < MAX_ASTAR_ITERATIONS) {
+        while (iterations < maxIterations) {
             iterations++;
-            let current_node = open_list.pop();
 
-            let node_key = `${current_node.x},${current_node.y}`;
-            if (closed_set.has(node_key)) continue;
-            closed_set.add(node_key);
-
-            if (current_node.equals(end_node)) {
-                let path = [];
-                let current = current_node;
-                while (current != null) {
-                    path.push({ x: current.x, y: current.y });
-                    current = current.parent;
-                }
-                path.reverse();
-
-                if (this.isPathSafe(path.slice(1))) {
-                    possible_paths.push(path);
-                    debugFinalPath = path.slice(1);
-                    break;
-                }
-                continue;
-            }
-
-            let children = [];
-            for (let i = 0; i < adjacent_squares.length; i++) {
-                let nx = current_node.x + adjacent_squares[i][0];
-                let ny = current_node.y + adjacent_squares[i][1];
-                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
-                    if (maze[ny][nx] !== -1) {
-                        let new_node = new Node(nx, ny);
-
-                        // 🚫 Фильтр: запрет хода назад (ТОЛЬКО для первого шага от головы!)
-                        let stepDir = { x: adjacent_squares[i][0], y: adjacent_squares[i][1] };
-                        if (current_node.equals(start_node)) {
-                            if (this.isBackwardsMove({ x: this.snake.x_dir, y: this.snake.y_dir }, stepDir)) {
-                                continue;
-                            }
-                        }
-
-                        if (!this.isStepSafe(current_node, new_node, maze)) {
-                            continue;
-                        }
-
-                        children.push(new_node);
+            // 🔥 Если достигли 80% — проверяем можно ли дойти до яблока
+            if (path.length >= minPathLength) {
+                if (this.canReachGoal(current, goal, visited, maze)) {
+                    const pathToGoal = this.quickPathToGoal(current, goal, visited, maze);
+                    if (pathToGoal.length > 0) {
+                        path.push(...pathToGoal);
+                        break;
                     }
                 }
             }
 
-            for (let child of children) {
-                let child_key = `${child.x},${child.y}`;
-                if (closed_set.has(child_key)) continue;
+            let bestDir = null;
+            let bestScore = -Infinity;
 
-                child.g = current_node.g + 1;
-                child.h = this.heuristic(child, end_node);
+            for (let dir of directions) {
+                if (path.length === 0) {
+                    if (this.isBackwardsMove({ x: this.snake.x_dir, y: this.snake.y_dir }, dir)) {
+                        continue;
+                    }
+                }
 
-                // 🔥 Штраф за удалённость от тела (фон Нейман)
-                const bodyNeighbors = this.countBodyNeighbors(child);
-                const isolationPenalty = (bodyNeighbors < 2) ? 2.0 : 0;
+                const nx = current.x + dir.x;
+                const ny = current.y + dir.y;
 
-                // 🔥 Штраф за зигзаг (частые повороты)
-                const zigzagPenalty = this.isZigzagPattern(current_node, child);
+                if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
 
-                // Итоговая стоимость
-                child.f = -(child.g + child.h) + isolationPenalty + zigzagPenalty;
-                child.parent = current_node;
+                const key = `${nx},${ny}`;
+                if (visited.has(key)) continue;
+                if (maze[ny][nx] === -1) continue;
 
-                let existing_node = open_list.find(child);
-                if (existing_node && existing_node.g <= child.g) {
+                // 🔥 Создаём будущее положение змейки после этого шага
+                const testFutureSnake = [...futureSnake, { x: nx, y: ny }];
+
+                // Проверяем: это яблоко?
+                const isApple = (nx === goal.x && ny === goal.y);
+                if (!isApple) {
+                    testFutureSnake.shift(); // Хвост сдвигается
+                }
+
+                // 🔥 Проверяем безопасность относительно будущего положения
+                const head = testFutureSnake[testFutureSnake.length - 1];
+                const emptyCells = COLS * ROWS - testFutureSnake.length;
+                const reachable = this.reachableCells(head, testFutureSnake);
+                const safe = reachable >= Math.floor(0.8 * emptyCells);
+
+                if (!safe) {
+                    continue; // 🔥 Пропускаем опасные шаги
+                }
+
+                // Оценка направления
+                let score = 0;
+
+                const distToGoal = abs(nx - goal.x) + abs(ny - goal.y);
+                score += distToGoal;
+
+                score += 100; // Бонус за безопасность (уже проверили выше)
+
+                const freeNeighbors = this.countFreeNeighbors({ x: nx, y: ny }, visited, maze);
+                score += freeNeighbors * 10;
+
+                if (freeNeighbors === 0) {
                     continue;
                 }
 
-                open_list.push(child);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestDir = dir;
+                }
+            }
+
+            if (bestDir) {
+                const nx = current.x + bestDir.x;
+                const ny = current.y + bestDir.y;
+
+                current = { x: nx, y: ny };
+                visited.add(`${current.x},${current.y}`);
+                path.push(current);
+
+                // 🔥 Обновляем будущее положение змейки
+                futureSnake.push({ x: nx, y: ny });
+                const isApple = (nx === goal.x && ny === goal.y);
+                if (!isApple) {
+                    futureSnake.shift();
+                }
+            } else {
+                break;
             }
         }
 
-        debugOpenList = open_list.heap.map(n => ({ x: n.x, y: n.y, f: n.f }));
-        debugClosedSet = closed_set;
         debugIsSearching = false;
 
-        if (possible_paths.length === 0) return [];
-        return possible_paths[0].slice(1);
+        if (DEBUG_MODE) {
+            console.log(`📊 Greedy path: ${path.length}/${freeCells} (${(path.length / freeCells * 100).toFixed(1)}%)`);
+        }
+
+        return path;
+    }
+
+    // 🔥 Быстрая проверка可达ности яблока (BFS)
+    canReachGoal(start, goal, visited, maze) {
+        const queue = [start];
+        const localVisited = new Set([`${start.x},${start.y}`]);
+        const maxSteps = 200; // 🔥 Ограничение
+        let steps = 0;
+
+        while (queue.length > 0 && steps < maxSteps) {
+            steps++;
+            const current = queue.shift();
+
+            if (current.x === goal.x && current.y === goal.y) {
+                return true;
+            }
+
+            const directions = [
+                { x: 0, y: -1 }, { x: 0, y: 1 },
+                { x: -1, y: 0 }, { x: 1, y: 0 }
+            ];
+
+            for (let dir of directions) {
+                const nx = current.x + dir.x;
+                const ny = current.y + dir.y;
+
+                if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+
+                const key = `${nx},${ny}`;
+                if (localVisited.has(key)) continue;
+                if (visited.has(key)) continue;
+                if (maze[ny][nx] === -1) continue;
+
+                localVisited.add(key);
+                queue.push({ x: nx, y: ny });
+            }
+        }
+
+        return false;
+    }
+
+    // 🔥 Быстрый путь к яблоку (простой BFS)
+    quickPathToGoal(start, goal, visited, maze) {
+        const queue = [{ pos: start, path: [] }];
+        const localVisited = new Set([`${start.x},${start.y}`]);
+
+        while (queue.length > 0) {
+            const { pos, path } = queue.shift();
+
+            if (pos.x === goal.x && pos.y === goal.y) {
+                return path;
+            }
+
+            const directions = [
+                { x: 0, y: -1 }, { x: 0, y: 1 },
+                { x: -1, y: 0 }, { x: 1, y: 0 }
+            ];
+
+            for (let dir of directions) {
+                const nx = pos.x + dir.x;
+                const ny = pos.y + dir.y;
+
+                if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+
+                const key = `${nx},${ny}`;
+                if (localVisited.has(key)) continue;
+                if (visited.has(key)) continue;
+                if (maze[ny][nx] === -1) continue;
+
+                localVisited.add(key);
+                queue.push({
+                    pos: { x: nx, y: ny },
+                    path: [...path, { x: nx, y: ny }]
+                });
+            }
+        }
+
+        return [];
+    }
+
+    // 🔥 Подсчёт свободных соседей
+    countFreeNeighbors(pos, visited, maze) {
+        let count = 0;
+        const directions = [
+            { x: 0, y: -1 }, { x: 0, y: 1 },
+            { x: -1, y: 0 }, { x: 1, y: 0 }
+        ];
+
+        for (let dir of directions) {
+            const nx = pos.x + dir.x;
+            const ny = pos.y + dir.y;
+
+            if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+
+            const key = `${nx},${ny}`;
+            if (visited.has(key)) continue;
+            if (maze[ny][nx] === -1) continue;
+
+            count++;
+        }
+
+        return count;
     }
 
     pathToTail(maze, start, end) {

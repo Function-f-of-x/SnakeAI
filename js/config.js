@@ -9,12 +9,12 @@ const FPS_VALUES = [0, 1, 15, 30, 60];
 const MAX_STEPS_WITHOUT_PROGRESS = 50000;
 
 // ===== Лимиты производительности поиска =====
-const MAX_ASTAR_ITERATIONS = 50000;
+const MAX_ASTAR_ITERATIONS = 1000000000000; // Огромный лимит для бесконечного поиска
 
 // ===== НАСТРОЙКИ ОТЛАДКИ =====
-const DEBUG_MODE = false;              // Включить визуализацию пути
+const DEBUG_MODE = true;              // Включить визуализацию пути
 const DEBUG_PAUSE_GAME = false;        // ⏸️ Полная остановка игры во время поиска
-const DEBUG_SHOW_FINAL_STATE = false;  // Показать финальное состояние open/closed после поиска
+const DEBUG_SHOW_FINAL_STATE = true;  // Показать финальное состояние open/closed после поиска
 const DEBUG_FREEZE_DURATION = 2000;   // Сколько мс показывать финальное состояние (мс)
 
 // ===== Глобальные переменные состояния игры =====

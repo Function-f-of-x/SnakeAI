@@ -1,2 +1,2 @@
 # SnakeAI
-A*+Reversed A*+Hamiltonan Cycle
+A*+Coverage A*+Hamiltonan Cycle

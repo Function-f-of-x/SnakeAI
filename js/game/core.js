@@ -41,17 +41,15 @@ function calculateCellSize() {
 }
 
 function draw() {
-//  DEBUG:   
     if (DEBUG_PAUSE_GAME && debugFreezeUntil > millis()) {
         background('#151515');
         apple.show(cellSize);
         snake.show(cellSize);
-        drawDebugPath();        //     ( )
+        drawDebugPath();      
         drawDebugOverlay();
         return;
     }
     
-    //    
     if (DEBUG_PAUSE_GAME && debugFreezeUntil <= millis() && debugFreezeUntil > 0) {
         console.log(' Game resumed');
         debugFreezeUntil = 0;
@@ -61,7 +59,6 @@ function draw() {
     apple.show(cellSize);
     snake.show(cellSize);
     
-    //  DEBUG:  
     if (DEBUG_MODE) {
         drawDebugPath();
     }
@@ -82,9 +79,7 @@ function draw() {
     updateUI();
 }
 
-//  DEBUG:  
 function drawDebugPath() {
-    //   -  
     if (snake.path && snake.path.length > 0) {
         stroke('#00ffff');
         strokeWeight(2);
@@ -98,9 +93,8 @@ function drawDebugPath() {
         endShape();
     }
     
-    //    (open/closed)
     if (DEBUG_SHOW_FINAL_STATE && !debugIsSearching && debugClosedSet.size > 0) {
-        // Closed set - 
+
         for (let key of debugClosedSet) {
             const [x, y] = key.split(',').map(Number);
             if (!isNaN(x) && !isNaN(y)) {
@@ -110,7 +104,6 @@ function drawDebugPath() {
             }
         }
         
-        // Open list - 
         for (let node of debugOpenList) {
             fill('#0000ff40');
             noStroke();
@@ -119,14 +112,13 @@ function drawDebugPath() {
     }
 }
 
-//  DEBUG:   
 function drawDebugOverlay() {
-    //  
+
     fill('#ffffff');
     noStroke();
     textAlign(CENTER, TOP);
     textSize(16);
-    text(' PAUSED FOR DEBUG', width/2, 10);
+    text('PAUSED FOR DEBUG', width/2, 10);
     
     if (debugSearchResult) {
         textSize(12);
@@ -136,7 +128,7 @@ function drawDebugOverlay() {
         text(`Closed Set: ${debugSearchResult.closedSetSize}`, width/2, 80);
     }
     
-    //  
+
     const remaining = Math.max(0, Math.ceil((debugFreezeUntil - millis()) / 1000));
     textSize(14);
     text(`Resuming in: ${remaining}s`, width/2, 110);
