@@ -1,3 +1,3 @@
-// Точка входа: все глобальные переменные уже объявлены в config.js и core.js
-// p5.js автоматически вызовет setup() после загрузки всех скриптов
-console.log('🐍 SnakeAI loaded | Grid: %d×%d', COLS, ROWS);
+// Этот файл может оставаться пустым или использоваться для глобальных обработчиков, 
+// так как p5.js автоматически подхватывает setup() и draw() из core.js
+console.log("Snake AI initialized. Waiting for Evan to complain about math...");

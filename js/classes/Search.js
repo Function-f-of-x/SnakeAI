@@ -3,659 +3,245 @@ class Search {
         this.snake = snake;
         this.apple = apple;
         this.lastUsedMethod = "None";
-        this.safetyCache = new Map();
-        this.MIN_PATH_COVERAGE = 0.8; // 🔥 Минимум 80% покрытия поля
+        this.dirs = [{ x: 0, y: -1 }, { x: 0, y: 1 }, { x: -1, y: 0 }, { x: 1, y: 0 }];
+        this.memo = new Map();
     }
 
-    refreshMaze() {
-        let maze = []; for (let j = 0; j < ROWS; j++) { let row = []; for (let i = 0; i < COLS; i++) row.push(0); maze.push(row); }
-        for (let s of this.snake.body) maze[s.y][s.x] = -1;
-        let head = this.snake.getHead(), tail = this.snake.getTail();
-        maze[head.y][head.x] = 1; maze[tail.y][tail.x] = 2;
-        return maze;
-    }
+    getNextMove() {
+        this.memo.clear();
+        if (!this.snake.body || this.snake.body.length === 0) return null;
 
-    getPath() {
-        if (this.snake.isDead || hasWon) return;
-
-        // 🐛 DEBUG: Проверка заморозки
-        if (DEBUG_PAUSE_GAME && debugIsSearching) {
-            return; // Алгоритм уже выполняется, не запускать второй раз
-        }
-
-        this.safetyCache.clear();
-
-        let maze = this.refreshMaze();
-        let start, end;
-        for (let j = 0; j < ROWS; j++) for (let i = 0; i < COLS; i++) {
-            if (maze[j][i] == 1) start = { x: i, y: j };
-            else if (maze[j][i] == 2) end = { x: i, y: j };
-        }
-
+        const head = this.snake.body[0];
+        const tail = this.snake.body[this.snake.body.length - 1];
         const totalCells = COLS * ROWS;
-        const snakeLength = this.snake.body.length;
-        const minCoverage = Math.floor(totalCells * this.MIN_PATH_COVERAGE);
+        const isSnakeLong = this.snake.body.length >= totalCells / 8;
 
-        // 🐛 DEBUG: Логирование выбора алгоритма
-        if (DEBUG_MODE) {
-            console.log(`\n🔍 getPath | Length: ${snakeLength} | Total: ${totalCells}`);
-            console.log(`   Min coverage (80%): ${minCoverage} cells`);
-            console.log(`   Threshold 1/8: ${Math.floor(totalCells / 8)} | Threshold 7/8: ${Math.floor(totalCells * 7 / 8)}`);
-        }
+        // 1. Пытаемся найти БЕЗОПАСНЫЙ путь к яблоку
+        let pathToApple = this.findPath(head, this.apple, isSnakeLong, true);
 
-        // 1️⃣ Ранняя игра: A* (кратчайший путь)
-        if (snakeLength < Math.floor(totalCells / 8)) {
-            if (DEBUG_MODE) console.log('🟢 Using A*');
-            this.snake.path = this.AStar(maze, start, this.apple);
-            this.lastUsedMethod = "A*";
-        }
-        // 2️⃣ Поздняя игра: pathToTail (путь к хвосту, без проверки 80%)
-        else if (snakeLength > Math.floor(totalCells * 7 / 8)) {
-            if (DEBUG_MODE) console.log('🔴 Using PathToTail');
-            this.snake.path = this.pathToTail(maze, start, end);
-            this.lastUsedMethod = "PathToTail";
-        }
-        // 3️⃣ Средняя игра: Long Safe Path (80%!)
-        else {
-            if (DEBUG_MODE) console.log('🟡 Using Long Safe Path (80%)');
-            this.snake.path = this.findLongSafePath(maze, start, this.apple);
-            this.lastUsedMethod = "LongSafePath";
+        if (pathToApple && pathToApple.length > 0) {
+            this.snake.survivalMode = false;
+            this.lastUsedMethod = isSnakeLong ? "A* (Safe Long)" : "A* (Safe Shortest)";
+            this.snake.path = pathToApple;
+            return pathToApple[0];
         }
 
-        // 🐛 DEBUG: Логирование результата
-        if (DEBUG_MODE) {
-            console.log(`📊 Result: Path length = ${this.snake.path.length} | Survival = ${this.snake.path.length === 0}`);
-            debugSearchResult = {
-                pathLength: this.snake.path.length,
-                algorithm: this.lastUsedMethod,
-                openListSize: debugOpenList.length,
-                closedSetSize: debugClosedSet.size
-            };
+        // 2. Если безопасного нет, пробуем любой путь к яблоку (рискуем)
+        let riskyPath = this.findPath(head, this.apple, false, false);
+        if (riskyPath && riskyPath.length > 0) {
+            if (this.countReachableSpace(riskyPath[0], this.snake.body) > 5) {
+                this.snake.survivalMode = false;
+                this.lastUsedMethod = "A* (Risky)";
+                this.snake.path = riskyPath;
+                return riskyPath[0];
+            }
         }
 
-        // 🐛 DEBUG: Заморозка игры для анализа
-        if (DEBUG_PAUSE_GAME && DEBUG_SHOW_FINAL_STATE) {
-            debugFreezeUntil = millis() + DEBUG_FREEZE_DURATION;
+        // 3. Выживание: путь к хвосту
+        this.snake.survivalMode = true;
+        this.snake.path = [];
+        let pathToTail = this.findPath(head, tail, true, false);
+
+        if (pathToTail && pathToTail.length > 0) {
+            this.lastUsedMethod = "Survival (Tail Chasing)";
+            return pathToTail[0];
         }
+
+        // 4. Паника
+        this.lastUsedMethod = "Survival (Panic Mode)";
+        return this.getBestSurvivalMove(head);
     }
 
-    // 🚫 Проверка: является ли ход назад (разворот на 180°)
-    isBackwardsMove(currentDir, candidateStep) {
-        return (abs(currentDir.x - candidateStep.x) === 2) || (abs(currentDir.y - candidateStep.y) === 2);
+    findPath(start, target, maximizeH, checkSafety) {
+        if (!start || !target) return null;
+
+        let openSet = new MinHeap((a, b) => a.f < b.f);
+        let closedSet = new Set();
+
+        // 1. ОГРАНИЧИТЕЛЬ: не дает циклу крутиться вечно
+        let iterations = 0;
+        const MAX_ITERATIONS = 10000;
+
+        openSet.push(new Node(start.x, start.y, 0, this.dist(start, target)));
+
+        while (!openSet.isEmpty()) {
+            iterations++;
+            if (iterations > MAX_ITERATIONS) {
+                console.warn("A* Search limit reached! Preventing crash.");
+                return null; // Уходим в Survival Mode вместо зависания
+            }
+
+            let current = openSet.pop();
+
+            // Стандартная проверка цели
+            if (current.x === target.x && current.y === target.y) {
+                return this.reconstructPath(current);
+            }
+
+            closedSet.add(`${current.x},${current.y}`);
+
+            for (let nb of this.getSafeNeighbors(current)) {
+                let key = `${nb.x},${nb.y}`;
+                if (closedSet.has(key)) continue;
+
+                // 2. БЕЗОПАСНОСТЬ: Проверяем только для первого шага!
+                // Если проверять глубже, будет дикий лаг.
+                if (checkSafety && current.x === start.x && current.y === start.y) {
+                    if (!this.isActuallySafe(nb)) continue;
+                }
+
+                let g = current.g + 1;
+                let h = this.dist(nb, target);
+
+                // 3. ПРЕДОТВРАЩЕНИЕ ЦИКЛА ПРИ ДЛИННОМ ПУТИ:
+                // Если h отрицательный, f может уменьшаться, что ломает логику MinHeap.
+                // Используем формулу, которая тянет змею к цели, но по длинному пути.
+                let f = maximizeH ? g - h : g + h;
+
+                let node = new Node(nb.x, nb.y, g, h, current);
+                node.f = f;
+                openSet.push(node);
+            }
+        }
+        return null;
     }
 
-    // 🛡️ Проверка безопасности шага (≥80% доступных клеток после шага)
-    isStepSafe(currentNode, nextNode, maze) {
-        const cacheKey = `${nextNode.x},${nextNode.y},${this.snake.body.length}`;
-        if (this.safetyCache.has(cacheKey)) {
-            return this.safetyCache.get(cacheKey);
+    isActuallySafe(move) {
+        let virtualBody = [{ x: move.x, y: move.y }, ...this.snake.body.slice(0, -1)];
+        let space = this.countReachableSpace(virtualBody[0], virtualBody);
+        let totalCells = COLS * ROWS;
+        let occupied = this.snake.body.length;
+
+        // На старте не душим проверками
+        if (occupied < totalCells * 0.2) return space > 10;
+
+        // Правило 80%
+        if (space < (totalCells - occupied) * 0.8) return false;
+
+        // Путь к хвосту для длинной змеи
+        if (occupied > 10) {
+            const virtualTail = virtualBody[virtualBody.length - 1];
+            return this.canReachTarget(virtualBody[0], virtualTail, virtualBody);
         }
 
-        const futureSnake = [...this.snake.body];
-        futureSnake.push(createVector(nextNode.x, nextNode.y));
-
-        if (nextNode.x !== this.apple.x || nextNode.y !== this.apple.y) {
-            futureSnake.shift();
-        }
-
-        const emptyCells = COLS * ROWS - futureSnake.length;
-        if (emptyCells <= 0) return false;
-
-        const head = futureSnake[futureSnake.length - 1];
-        const reachable = this.reachableCells(head, futureSnake);
-
-        const safe = reachable >= Math.floor(0.8 * emptyCells);
-
-        // 🐛 DEBUG: Логирование проверок безопасности
-        if (DEBUG_MODE && !safe) {
-            console.warn(`   ⚠️ isStepSafe FAILED | Reachable: ${reachable} | Required: ${Math.floor(0.8 * emptyCells)} | Empty: ${emptyCells}`);
-        }
-        this.safetyCache.set(cacheKey, safe);
-        if (this.safetyCache.size > 1000) {
-            const firstKey = this.safetyCache.keys().next().value;
-            this.safetyCache.delete(firstKey);
-        }
-        return safe;
+        return true;
     }
 
-    neighbors(node, maze) {
-        const deltas = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
-        return deltas.map(d => ({ x: node.x + d.x, y: node.y + d.y }))
-            .filter(n => n.x >= 0 && n.x < COLS && n.y >= 0 && n.y < ROWS)
-            .filter(n => maze[n.y][n.x] != -1);
-    }
-
-    reachableCells(start, occupied, limit = Infinity) {
-        // 🔥 Создаём Set для O(1) поиска
-        const occupiedSet = new Set(occupied.map(s => `${s.x},${s.y}`));
-
-        const queue = [start];
-        const visited = new Set([`${start.x},${start.y}`]);
-        let count = 1;
-
+    canReachTarget(start, target, body) {
+        let queue = [start];
+        let visited = new Set();
+        visited.add(`${start.x},${start.y}`);
         while (queue.length > 0) {
-            // 🔥 Early exit: если достигли лимита
-            if (count >= limit) return count;
-
-            let cur = queue.shift();
-            const deltas = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
-
-            for (let d of deltas) {
-                let nx = cur.x + d.x, ny = cur.y + d.y;
+            let curr = queue.shift();
+            if (curr.x === target.x && curr.y === target.y) return true;
+            for (let d of this.dirs) {
+                let nx = curr.x + d.x, ny = curr.y + d.y;
                 if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
-
-                // 🔥 Используем Set вместо array.some()
-                if (occupiedSet.has(`${nx},${ny}`)) continue;
-
-                const key = `${nx},${ny}`;
-                if (!visited.has(key)) {
-                    visited.add(key);
+                if (!body.some(p => p.x === nx && p.y === ny) && !visited.has(`${nx},${ny}`)) {
+                    visited.add(`${nx},${ny}`);
                     queue.push({ x: nx, y: ny });
-                    count++;
-
-                    // 🔥 Early exit
-                    if (count >= limit) return count;
                 }
             }
         }
-        return count;
-    }
-
-    heuristic(a, b) { return abs(a.x - b.x) + abs(a.y - b.y); }
-
-    isPathSafe(path) {
-        if (path.length === 0) return false;
-
-        const futureSnake = [...this.snake.body];
-        for (let step of path) {
-            futureSnake.push(createVector(step.x, step.y));
-            if (step.x === this.apple.x && step.y === this.apple.y) {
-            } else {
-                futureSnake.shift();
-            }
-        }
-
-        const emptyCells = COLS * ROWS - futureSnake.length;
-        if (emptyCells <= 0) return false;
-
-        const required = Math.floor(0.8 * emptyCells);
-        const head = futureSnake[futureSnake.length - 1];
-        const reachable = this.reachableCells(head, futureSnake, required); // 🔥 Early exit
-        return reachable >= required;
-    }
-
-    // 🔥 Подсчёт клеток тела в окрестности фон Неймана (4 соседа)
-    countBodyNeighbors(node) {
-        let count = 0;
-
-        // 4 соседа фон Неймана: ↑↓←→
-        const neighbors = [
-            { x: node.x, y: node.y - 1 }, // Вверх
-            { x: node.x, y: node.y + 1 }, // Вниз
-            { x: node.x - 1, y: node.y }, // Влево
-            { x: node.x + 1, y: node.y }  // Вправо
-        ];
-
-        for (let n of neighbors) {
-            // Проверяем границы
-            if (n.x < 0 || n.x >= COLS || n.y < 0 || n.y >= ROWS) continue;
-
-            // Проверяем есть ли здесь часть тела
-            for (let segment of this.snake.body) {
-                if (segment.x === n.x && segment.y === n.y) {
-                    count++;
-                    break;
-                }
-            }
-        }
-
-        return count;
-    }
-
-    AStar(maze, start, goal) {
-        // Сброс отладочных переменных
-        debugOpenList = [];
-        debugClosedSet = new Set();
-        debugFinalPath = [];
-        debugIsSearching = true;
-
-        let start_node = new Node(start.x, start.y);
-        let end_node = new Node(goal.x, goal.y);
-
-        let open_list = new MinHeap();
-        let closed_set = new Set();
-
-        open_list.push(start_node);
-        let possible_paths = [];
-        const adjacent_squares = [[0, -1], [0, 1], [-1, 0], [1, 0]];
-        let max_paths_to_check = 5;
-        let iterations = 0;
-
-        while (!open_list.isEmpty() && possible_paths.length < max_paths_to_check && iterations < MAX_ASTAR_ITERATIONS) {
-            iterations++;
-            let current_node = open_list.pop();
-
-            let node_key = `${current_node.x},${current_node.y}`;
-            if (closed_set.has(node_key)) continue;
-            closed_set.add(node_key);
-
-            if (current_node.equals(end_node)) {
-                let path = [];
-                let current = current_node;
-                while (current != null) {
-                    path.push({ x: current.x, y: current.y });
-                    current = current.parent;
-                }
-                path.reverse();
-
-                if (this.isPathSafe(path.slice(1))) {
-                    possible_paths.push(path);
-                    debugFinalPath = path.slice(1);
-                    break;
-                }
-                continue;
-            }
-
-            let children = [];
-            for (let i = 0; i < adjacent_squares.length; i++) {
-                let nx = current_node.x + adjacent_squares[i][0];
-                let ny = current_node.y + adjacent_squares[i][1];
-                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
-                    if (maze[ny][nx] !== -1) {
-                        let new_node = new Node(nx, ny);
-
-                        // 🚫 Фильтр: запрет хода назад (ТОЛЬКО для первого шага от головы!)
-                        let stepDir = { x: adjacent_squares[i][0], y: adjacent_squares[i][1] };
-                        if (current_node.equals(start_node)) {
-                            if (this.isBackwardsMove({ x: this.snake.x_dir, y: this.snake.y_dir }, stepDir)) {
-                                continue;
-                            }
-                        }
-
-
-                        // 🛡️ Фильтр: проверка безопасности шага
-                        if (!this.isStepSafe(current_node, new_node, maze)) {
-                            continue;
-                        }
-
-                        children.push(new_node);
-                    }
-                }
-            }
-
-            for (let child of children) {
-                let child_key = `${child.x},${child.y}`;
-                if (closed_set.has(child_key)) continue;
-
-                child.g = current_node.g + 1;
-                child.h = this.heuristic(child, end_node);
-
-                // 🔥 Штраф за удалённость от тела
-                const bodyNeighbors = this.countBodyNeighbors(child);
-                const isolationPenalty = (bodyNeighbors < 2) ? 4.0 : 0; // 🔥 Штраф если < 2 соседей
-
-                child.f = child.g + child.h + isolationPenalty;
-                child.parent = current_node;
-
-                let existing_node = open_list.find(child);
-                if (existing_node && existing_node.g <= child.g) {
-                    continue;
-                }
-
-                open_list.push(child);
-            }
-        }
-
-        // Сохранение финального состояния для отладки
-        debugOpenList = open_list.heap.map(n => ({ x: n.x, y: n.y, f: n.f }));
-        debugClosedSet = closed_set;
-        debugIsSearching = false;
-
-        if (possible_paths.length === 0) return [];
-        return possible_paths[0].slice(1);
-    }
-
-    // 🔥 Жадный поиск длинного безопасного пути
-    findLongSafePath(maze, start, goal) {
-        debugOpenList = [];
-        debugClosedSet = new Set();
-        debugFinalPath = [];
-        debugIsSearching = true;
-
-        const totalCells = COLS * ROWS;
-        const freeCells = totalCells - this.snake.body.length;
-        const minPathLength = Math.floor(freeCells * this.MIN_PATH_COVERAGE);
-
-        const path = [];
-        const visited = new Set([`${start.x},${start.y}`]);
-        let current = { x: start.x, y: start.y };
-
-        // 🔥 Будущее положение змейки (начинаем с текущего)
-        let futureSnake = [...this.snake.body];
-
-        const directions = [
-            { x: 0, y: -1, name: 'up' },
-            { x: 0, y: 1, name: 'down' },
-            { x: -1, y: 0, name: 'left' },
-            { x: 1, y: 0, name: 'right' }
-        ];
-
-        let iterations = 0;
-        const maxIterations = Math.min(freeCells, 1000);
-
-        while (iterations < maxIterations) {
-            iterations++;
-
-            // 🔥 Если достигли 80% — проверяем можно ли дойти до яблока
-            if (path.length >= minPathLength) {
-                if (this.canReachGoal(current, goal, visited, maze)) {
-                    const pathToGoal = this.quickPathToGoal(current, goal, visited, maze);
-                    if (pathToGoal.length > 0) {
-                        path.push(...pathToGoal);
-                        break;
-                    }
-                }
-            }
-
-            let bestDir = null;
-            let bestScore = -Infinity;
-
-            for (let dir of directions) {
-                if (path.length === 0) {
-                    if (this.isBackwardsMove({ x: this.snake.x_dir, y: this.snake.y_dir }, dir)) {
-                        continue;
-                    }
-                }
-
-                const nx = current.x + dir.x;
-                const ny = current.y + dir.y;
-
-                if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
-
-                const key = `${nx},${ny}`;
-                if (visited.has(key)) continue;
-                if (maze[ny][nx] === -1) continue;
-
-                // 🔥 Создаём будущее положение змейки после этого шага
-                const testFutureSnake = [...futureSnake, { x: nx, y: ny }];
-
-                // Проверяем: это яблоко?
-                const isApple = (nx === goal.x && ny === goal.y);
-                if (!isApple) {
-                    testFutureSnake.shift(); // Хвост сдвигается
-                }
-
-                // 🔥 Проверяем безопасность относительно будущего положения
-                const head = testFutureSnake[testFutureSnake.length - 1];
-                const emptyCells = COLS * ROWS - testFutureSnake.length;
-                const reachable = this.reachableCells(head, testFutureSnake);
-                const safe = reachable >= Math.floor(0.8 * emptyCells);
-
-                if (!safe) {
-                    continue; // 🔥 Пропускаем опасные шаги
-                }
-
-                // Оценка направления
-                let score = 0;
-
-                const distToGoal = abs(nx - goal.x) + abs(ny - goal.y);
-                score += distToGoal;
-
-                score += 100; // Бонус за безопасность (уже проверили выше)
-
-                const freeNeighbors = this.countFreeNeighbors({ x: nx, y: ny }, visited, maze);
-                score += freeNeighbors * 10;
-
-                if (freeNeighbors === 0) {
-                    continue;
-                }
-
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestDir = dir;
-                }
-            }
-
-            if (bestDir) {
-                const nx = current.x + bestDir.x;
-                const ny = current.y + bestDir.y;
-
-                current = { x: nx, y: ny };
-                visited.add(`${current.x},${current.y}`);
-                path.push(current);
-
-                // 🔥 Обновляем будущее положение змейки
-                futureSnake.push({ x: nx, y: ny });
-                const isApple = (nx === goal.x && ny === goal.y);
-                if (!isApple) {
-                    futureSnake.shift();
-                }
-            } else {
-                break;
-            }
-        }
-
-        debugIsSearching = false;
-
-        if (DEBUG_MODE) {
-            console.log(`📊 Greedy path: ${path.length}/${freeCells} (${(path.length / freeCells * 100).toFixed(1)}%)`);
-        }
-
-        return path;
-    }
-
-    // 🔥 Быстрая проверка可达ности яблока (BFS)
-    canReachGoal(start, goal, visited, maze) {
-        const queue = [start];
-        const localVisited = new Set([`${start.x},${start.y}`]);
-        const maxSteps = 200; // 🔥 Ограничение
-        let steps = 0;
-
-        while (queue.length > 0 && steps < maxSteps) {
-            steps++;
-            const current = queue.shift();
-
-            if (current.x === goal.x && current.y === goal.y) {
-                return true;
-            }
-
-            const directions = [
-                { x: 0, y: -1 }, { x: 0, y: 1 },
-                { x: -1, y: 0 }, { x: 1, y: 0 }
-            ];
-
-            for (let dir of directions) {
-                const nx = current.x + dir.x;
-                const ny = current.y + dir.y;
-
-                if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
-
-                const key = `${nx},${ny}`;
-                if (localVisited.has(key)) continue;
-                if (visited.has(key)) continue;
-                if (maze[ny][nx] === -1) continue;
-
-                localVisited.add(key);
-                queue.push({ x: nx, y: ny });
-            }
-        }
-
         return false;
     }
 
-    // 🔥 Быстрый путь к яблоку (простой BFS)
-    quickPathToGoal(start, goal, visited, maze) {
-        const queue = [{ pos: start, path: [] }];
-        const localVisited = new Set([`${start.x},${start.y}`]);
+    getSafeNeighbors(pos, customBody = null, isFloodFill = false) {
+        let res = [];
+        let body = customBody || this.snake.body;
 
-        while (queue.length > 0) {
-            const { pos, path } = queue.shift();
+        for (let d of this.dirs) {
+            let nx = pos.x + d.x, ny = pos.y + d.y;
 
-            if (pos.x === goal.x && pos.y === goal.y) {
-                return path;
-            }
+            if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                if (!body.some(p => p.x === nx && p.y === ny)) {
+                    if (isFloodFill) {
+                        res.push({ x: nx, y: ny });
+                        continue;
+                    }
 
-            const directions = [
-                { x: 0, y: -1 }, { x: 0, y: 1 },
-                { x: -1, y: 0 }, { x: 1, y: 0 }
-            ];
+                    // ОПТИМИЗАЦИЯ: Кэширование
+                    let key = `${nx},${ny}`;
+                    if (this.memo.has(key)) {
+                        if (this.memo.get(key)) res.push({ x: nx, y: ny });
+                        continue;
+                    }
 
-            for (let dir of directions) {
-                const nx = pos.x + dir.x;
-                const ny = pos.y + dir.y;
+                    let virtualBody = [{ x: nx, y: ny }, ...body.slice(0, -1)];
+                    let space = this.countReachableSpace({ x: nx, y: ny }, virtualBody);
 
-                if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+                    let freeCellsNow = (COLS * ROWS) - body.length;
+                    let isSafe = space >= freeCellsNow * 0.8;
 
-                const key = `${nx},${ny}`;
-                if (localVisited.has(key)) continue;
-                if (visited.has(key)) continue;
-                if (maze[ny][nx] === -1) continue;
-
-                localVisited.add(key);
-                queue.push({
-                    pos: { x: nx, y: ny },
-                    path: [...path, { x: nx, y: ny }]
-                });
+                    this.memo.set(key, isSafe); // Запоминаем результат
+                    if (isSafe) res.push({ x: nx, y: ny });
+                }
             }
         }
-
-        return [];
+        return res;
     }
 
-    // 🔥 Подсчёт свободных соседей
-    countFreeNeighbors(pos, visited, maze) {
-        let count = 0;
-        const directions = [
-            { x: 0, y: -1 }, { x: 0, y: 1 },
-            { x: -1, y: 0 }, { x: 1, y: 0 }
-        ];
+    countReachableSpace(startPos, body) {
+        let queue = [startPos], visited = new Set(), count = 0;
+        visited.add(`${startPos.x},${startPos.y}`);
 
-        for (let dir of directions) {
-            const nx = pos.x + dir.x;
-            const ny = pos.y + dir.y;
+        let totalCells = COLS * ROWS;
+        let limit = Math.floor(totalCells * 0.85); // ОПТИМИЗАЦИЯ: Лимит счета
 
-            if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
-
-            const key = `${nx},${ny}`;
-            if (visited.has(key)) continue;
-            if (maze[ny][nx] === -1) continue;
-
+        while (queue.length > 0) {
+            let curr = queue.shift();
             count++;
-        }
 
+            // Если мы уже нашли достаточно места, чтобы пройти проверку 80%
+            // прекращаем считать — этого достаточно.
+            if (count > limit) return count;
+
+            let neighbors = this.getSafeNeighbors(curr, body, true);
+            for (let nb of neighbors) {
+                let key = `${nb.x},${nb.y}`;
+                if (!visited.has(key)) {
+                    visited.add(key);
+                    queue.push(nb);
+                }
+            }
+        }
         return count;
     }
 
-    pathToTail(maze, start, end) {
-        // Сброс отладочных переменных
-        debugOpenList = [];
-        debugClosedSet = new Set();
-        debugFinalPath = [];
-        debugIsSearching = true;
+    getBestSurvivalMove(head) {
+        let best = null;
+        let maxSpace = -1;
 
-        let start_node = new Node(start.x, start.y);
-        let end_node = new Node(end.x, end.y);
-        let open_list = [];
-        let closed_list = [];
-        open_list.push(start_node);
-        let possible_paths = [];
-        const adjacent_squares = [
-            [0, -1],
-            [0, 1],
-            [-1, 0],
-            [1, 0],
-        ];
+        // Получаем только те клетки, которые оставляют > 80% пространства
+        let safeOptions = this.getSafeNeighbors(head);
 
-        while (open_list.length > 0) {
-
-            let current_node = open_list[0];
-            let current_index = 0;
-            let index = 0;
-
-            for (let i = 0; i < open_list.length; i++) {
-                if (open_list[i].f > current_node.f) {
-                    current_node = open_list[i];
-                    current_index = index;
-                }
-                index++;
-            }
-
-            open_list.splice(current_index, 1);
-            closed_list.push(current_node);
-            if (current_node.equals(end_node)) {
-                let path = [];
-                let current = current_node;
-                while (current != null) {
-                    path.push(current);
-                    current = current.parent;
-                }
-                let reversed_path = path.reverse();
-                let path_coords = reversed_path.map(node => ({ x: node.x, y: node.y }));
-
-                possible_paths.push(path_coords);
-                debugFinalPath = path_coords.slice(1);
-            }
-
-            let children = [];
-            for (let i = 0; i < adjacent_squares.length; i++) {
-                let node_position = [current_node.x + adjacent_squares[i][0], current_node.y + adjacent_squares[i][1]];
-                if (node_position[0] <= 39 && node_position[0] >= 0) {
-                    if (node_position[1] <= 19 && node_position[1] >= 0) {
-                        if (maze[node_position[1]][node_position[0]] != -1) {
-
-                            // 🚫 Фильтр: запрет хода назад (ТОЛЬКО для первого шага от головы!)
-                            let stepDir = { x: adjacent_squares[i][0], y: adjacent_squares[i][1] };
-                            if (current_node.equals(start_node)) {
-                                if (this.isBackwardsMove({ x: this.snake.x_dir, y: this.snake.y_dir }, stepDir)) {
-                                    continue;
-                                }
-                            }
-
-                            let new_node = new Node(node_position[0], node_position[1]);
-                            children.push(new_node);
-                        }
+        // Если таких идеальных клеток нет, ищем вообще любую свободную (последний шанс)
+        if (safeOptions.length === 0) {
+            // Временный обход фильтра 80% для критической ситуации
+            for (let d of this.dirs) {
+                let nx = head.x + d.x, ny = head.y + d.y;
+                if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                    if (!this.snake.body.some(p => p.x === nx && p.y === ny)) {
+                        let s = this.countReachableSpace({ x: nx, y: ny }, this.snake.body);
+                        if (s > maxSpace) { maxSpace = s; best = { x: nx, y: ny }; }
                     }
                 }
             }
-
-            for (let i = 0; i < children.length; i++) {
-                let if_in_closed_list = false;
-                for (let j = 0; j < closed_list.length; j++) {
-                    if (children[i].equals(closed_list[j])) {
-                        if_in_closed_list = true;
-                    }
-                }
-                if (!if_in_closed_list) {
-                    children[i].g = current_node.g + 2;
-                    children[i].h = abs(children[i].x - end_node.x) + abs(children[i].y - end_node.y);
-                    children[i].f = children[i].g + children[i].h;
-                    let present = false;
-                    for (let j = 0; j < open_list.length; j++) {
-                        if (children[i].equals(open_list[j]) && children[i].g < open_list[j].g) {
-                            present = true;
-                        } else if (children[i].equals(open_list[j]) && children[i].g >= open_list[j].g) {
-                            open_list[j] = children[i];
-                            open_list[j].parent = current_node;
-                        }
-                    }
-                    if (!present) {
-                        children[i].parent = current_node;
-                        open_list.push(children[i]);
-                    }
-                }
+        } else {
+            for (let option of safeOptions) {
+                let s = this.countReachableSpace(option, this.snake.body);
+                if (s > maxSpace) { maxSpace = s; best = option; }
             }
         }
 
-        debugOpenList = open_list.map(n => ({ x: n.x, y: n.y, f: n.f }));
-        debugClosedSet = new Set(closed_list.map(n => `${n.x},${n.y}`));
-        debugIsSearching = false;
+        return best;
+    }
 
-        let path = [];
-        for (let i = 0; i < possible_paths.length; i++) {
-            if (possible_paths[i].length > path.length) {
-                path = possible_paths[i];
-            }
-        }
-        return path.slice(1);
+    dist(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y); }
+
+    reconstructPath(n) {
+        let p = [];
+        while (n && n.parent) { p.push({ x: n.x, y: n.y }); n = n.parent; }
+        return p.reverse();
     }
 }
