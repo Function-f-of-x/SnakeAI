@@ -58,7 +58,7 @@ class Search {
         let openSet = new MinHeap((a, b) => a.f < b.f);
         let closedSet = new Set();
 
-        // 1. ОГРАНИЧИТЕЛЬ: не дает циклу крутиться вечно
+        // 🛡️ Ограничитель итераций
         let iterations = 0;
         const MAX_ITERATIONS = 10000;
 
@@ -67,15 +67,30 @@ class Search {
         while (!openSet.isEmpty()) {
             iterations++;
             if (iterations > MAX_ITERATIONS) {
-                console.warn("A* Search limit reached! Preventing crash.");
-                return null; // Уходим в Survival Mode вместо зависания
+                console.warn("⚠️ A* Search limit reached! Preventing crash.");
+                return null;
             }
 
             let current = openSet.pop();
 
-            // Стандартная проверка цели
+            // ✅ ГЛАВНОЕ УСЛОВИЕ: возвращаем путь ТОЛЬКО если достигли цели
+            // Это гарантирует, что змейка ОБЯЗАТЕЛЬНО придёт к яблоку
             if (current.x === target.x && current.y === target.y) {
-                return this.reconstructPath(current);
+                const path = this.reconstructPath(current);
+
+                // 🔍 При поиске длинного пути: дополнительная валидация уникальности
+                if (maximizeH && !this.hasUniqueCells(path)) {
+                    console.warn("❌ Path contains duplicate cells, rejecting and continuing search...");
+                    continue; // Ищем альтернативный путь без дубликатов
+                }
+
+                // 🎯 Финальная проверка: последняя клетка пути должна быть яблоком
+                const lastCell = path[path.length - 1];
+                if (lastCell && lastCell.x === target.x && lastCell.y === target.y) {
+                    return path;
+                }
+                console.warn("❌ Path does not end at target, rejecting...");
+                continue;
             }
 
             closedSet.add(`${current.x},${current.y}`);
@@ -84,8 +99,7 @@ class Search {
                 let key = `${nb.x},${nb.y}`;
                 if (closedSet.has(key)) continue;
 
-                // 2. БЕЗОПАСНОСТЬ: Проверяем только для первого шага!
-                // Если проверять глубже, будет дикий лаг.
+                // 🔐 Проверка безопасности только для первого шага (оптимизация)
                 if (checkSafety && current.x === start.x && current.y === start.y) {
                     if (!this.isActuallySafe(nb)) continue;
                 }
@@ -93,17 +107,80 @@ class Search {
                 let g = current.g + 1;
                 let h = this.dist(nb, target);
 
-                // 3. ПРЕДОТВРАЩЕНИЕ ЦИКЛА ПРИ ДЛИННОМ ПУТИ:
-                // Если h отрицательный, f может уменьшаться, что ломает логику MinHeap.
-                // Используем формулу, которая тянет змею к цели, но по длинному пути.
-                let f = maximizeH ? g - h : g + h;
+                // 📈 При maximizeH инвертируем стоимость для поиска длинного пути
+                // Но сохраняем эвристику, чтобы алгоритм не "заблудился"
+                const isolationPenalty = this.countBodyNeighbors(nb) == 2 ? 10 : 0;
+                let f = maximizeH ? -g - h + isolationPenalty : g + h - isolationPenalty;
 
                 let node = new Node(nb.x, nb.y, g, h, current);
                 node.f = f;
                 openSet.push(node);
             }
         }
+
+        // 🚫 Если цикл завершился без нахождения валидного пути
         return null;
+    }
+
+    wouldCreateBarrier(pos, body = null) {
+        const snakeBody = body || this.snake.body;
+        const totalCells = COLS * ROWS;
+
+        // 🔍 Проверяем горизонталь (ряд y)
+        let rowFilled = true;
+        for (let x = 0; x < COLS; x++) {
+            const isOccupied = snakeBody.some(p => p.x === x && p.y === pos.y);
+            if (!isOccupied) {
+                rowFilled = false;
+                break;
+            }
+        }
+
+        // 🔍 Проверяем вертикаль (столбец x)
+        let colFilled = true;
+        for (let y = 0; y < ROWS; y++) {
+            const isOccupied = snakeBody.some(p => p.x === pos.x && p.y === y);
+            if (!isOccupied) {
+                colFilled = false;
+                break;
+            }
+        }
+
+        // 🚫 Если ряд ИЛИ столбец полностью заполнен - это барьер
+        const createsBarrier = rowFilled || colFilled;
+
+        if (createsBarrier) {
+            console.warn(`⚠️ Barrier detected at (${pos.x}, ${pos.y}): row=${rowFilled}, col=${colFilled}`);
+        }
+
+        return createsBarrier;
+    }
+
+    countBodyNeighbors(pos) {
+        let count = 0;
+        for (let d of this.dirs) {
+            let nx = pos.x + d.x, ny = pos.y + d.y;
+            if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+                if (this.snake.body.some(p => p.x === nx && p.y === ny)) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    hasUniqueCells(path) {
+        if (!path || path.length === 0) return true;
+        const seen = new Set();
+        for (let cell of path) {
+            const key = `${cell.x},${cell.y}`;
+            if (seen.has(key)) {
+                console.warn(`⚠️ Duplicate cell detected in path: (${cell.x}, ${cell.y})`);
+                return false;
+            }
+            seen.add(key);
+        }
+        return true;
     }
 
     isActuallySafe(move) {
@@ -111,6 +188,12 @@ class Search {
         let space = this.countReachableSpace(virtualBody[0], virtualBody);
         let totalCells = COLS * ROWS;
         let occupied = this.snake.body.length;
+
+        // 🚫 НОВОЕ: Проверяем на создание барьера
+        if (this.wouldCreateBarrier(move, virtualBody)) {
+            console.warn(`❌ Move (${move.x}, ${move.y}) would create a barrier! Rejecting.`);
+            return false;
+        }
 
         // На старте не душим проверками
         if (occupied < totalCells * 0.2) return space > 10;
@@ -158,6 +241,12 @@ class Search {
                     if (isFloodFill) {
                         res.push({ x: nx, y: ny });
                         continue;
+                    }
+
+                    // 🚫 НОВОЕ: Быстрая проверка на барьер (до кэша)
+                    let virtualBodyAfterMove = [{ x: nx, y: ny }, ...body.slice(0, -1)];
+                    if (this.wouldCreateBarrier({ x: nx, y: ny }, virtualBodyAfterMove)) {
+                        continue; // Пропускаем этот ход
                     }
 
                     // ОПТИМИЗАЦИЯ: Кэширование
@@ -241,7 +330,22 @@ class Search {
 
     reconstructPath(n) {
         let p = [];
-        while (n && n.parent) { p.push({ x: n.x, y: n.y }); n = n.parent; }
+        const seen = new Set(); // 🔒 Защита от циклов при реконструкции
+
+        while (n && n.parent) {
+            const key = `${n.x},${n.y}`;
+
+            // 🚫 Если клетка уже есть в пути — обрезаем цикл
+            if (seen.has(key)) {
+                console.warn(`🔄 Cycle detected at (${n.x}, ${n.y}), truncating path`);
+                break;
+            }
+
+            seen.add(key);
+            p.push({ x: n.x, y: n.y });
+            n = n.parent;
+        }
+
         return p.reverse();
     }
 }
